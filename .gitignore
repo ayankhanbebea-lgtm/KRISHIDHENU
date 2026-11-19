@@ -8,3 +8,6 @@ prisma/dev.db*
 .env
 .env*.local
 *.log
+
+.vercel
+.env*

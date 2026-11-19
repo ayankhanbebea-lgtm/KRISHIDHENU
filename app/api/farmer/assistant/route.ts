@@ -124,8 +124,8 @@ export async function POST(req: NextRequest) {
 
     const apiKey = process.env.GEMINI_API_KEY || process.env.AI_PROVIDER_API_KEY;
 
-    // Graceful offline fallback if API key is not yet configured
-    if (!apiKey) {
+    // Graceful offline fallback if API key is not yet configured or is a placeholder
+    if (!apiKey || apiKey.startsWith("your_") || apiKey.trim() === "") {
       return NextResponse.json({
         reply: `Namaste ${session.name}! AI Assistant is operating in demo mode because GEMINI_API_KEY is not configured yet. Your current token is ${context.activeBooking?.token || "none"}, and you have ${context.queueMetrics?.farmersAhead ?? 0} farmers ahead. To activate full Google Gemini AI responses, please add GEMINI_API_KEY in your environment variables.`,
         offline: true,
