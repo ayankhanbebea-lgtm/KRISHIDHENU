@@ -7,7 +7,7 @@ export async function GET() {
   const session = await getSession();
   if (!session || session.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const db = getDb();
-  const staffList = db.prepare(`
+  const staffList = await db.prepare(`
     SELECT u.id, u.phone, u.name, u.active, u.created_at as createdAt,
            cs.centre_id as centreId, pc.name as centreName, pc.code as centreCode
     FROM users u
@@ -30,18 +30,18 @@ export async function POST(req: NextRequest) {
   if (!/^[6-9]\d{9}$/.test(phone)) return NextResponse.json({ error: "Invalid phone number" }, { status: 400 });
 
   const db = getDb();
-  const existing = db.prepare(`SELECT id FROM users WHERE phone = ?`).get(phone);
+  const existing = await db.prepare(`SELECT id FROM users WHERE phone = ?`).get(phone);
   if (existing) return NextResponse.json({ error: "User with this phone already exists" }, { status: 409 });
 
-  const centre = db.prepare(`SELECT id FROM procurement_centres WHERE id = ?`).get(body.centreId);
+  const centre = await db.prepare(`SELECT id FROM procurement_centres WHERE id = ?`).get(body.centreId);
   if (!centre) return NextResponse.json({ error: "Centre not found" }, { status: 404 });
 
   const uid = newId("usr_");
-  db.prepare(`INSERT INTO users (id, phone, role, name, language, active, created_at, updated_at) VALUES (?, ?, 'STAFF', ?, 'en', 1, ?, ?)`)
+  await db.prepare(`INSERT INTO users (id, phone, role, name, language, active, created_at, updated_at) VALUES (?, ?, 'STAFF', ?, 'en', 1, ?, ?)`)
     .run(uid, phone, body.name.trim(), nowIso(), nowIso());
-  db.prepare(`INSERT INTO centre_staff (id, user_id, centre_id) VALUES (?, ?, ?)`)
+  await db.prepare(`INSERT INTO centre_staff (id, user_id, centre_id) VALUES (?, ?, ?)`)
     .run(newId("cst_"), uid, body.centreId);
 
-  recordAudit(session.id, "CREATE_STAFF", "user", uid);
+  await recordAudit(session.id, "CREATE_STAFF", "user", uid);
   return NextResponse.json({ ok: true, id: uid });
 }

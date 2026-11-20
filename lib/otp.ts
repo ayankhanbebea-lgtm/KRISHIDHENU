@@ -64,11 +64,11 @@ export async function sendOtpToMobile(rawPhone: string): Promise<SendOtpResult> 
   const db = getDb();
 
   // 1. Check resend cooldown (10 seconds in demo mode, 30 seconds in production mode)
-  const lastOtp = db
+  const lastOtp = (await db
     .prepare(
       `SELECT created_at FROM otps WHERE phone = ? ORDER BY created_at DESC LIMIT 1`
     )
-    .get(phone) as { created_at: string } | undefined;
+    .get(phone)) as { created_at: string } | undefined;
 
   if (lastOtp) {
     const elapsedSeconds = (Date.now() - new Date(lastOtp.created_at).getTime()) / 1000;
@@ -86,9 +86,9 @@ export async function sendOtpToMobile(rawPhone: string): Promise<SendOtpResult> 
   if (!OTP_DEMO_MODE) {
     const windowStart = new Date(Date.now() - RATE_LIMIT_WINDOW_MINUTES * 60 * 1000).toISOString();
     const recentCount = (
-      db
+      (await db
         .prepare(`SELECT COUNT(*) as c FROM otps WHERE phone = ? AND created_at >= ?`)
-        .get(phone, windowStart) as { c: number }
+        .get(phone, windowStart)) as { c: number }
     ).c;
 
     if (recentCount >= MAX_REQUESTS_PER_WINDOW) {
@@ -106,10 +106,10 @@ export async function sendOtpToMobile(rawPhone: string): Promise<SendOtpResult> 
   const otpId = newId("otp_");
 
   // Invalidate any existing unverified OTPs for this phone
-  db.prepare(`UPDATE otps SET verified_at = 'SUPERSEDED' WHERE phone = ? AND verified_at IS NULL`).run(phone);
+  await db.prepare(`UPDATE otps SET verified_at = 'SUPERSEDED' WHERE phone = ? AND verified_at IS NULL`).run(phone);
 
   // Store hashed OTP record
-  db.prepare(
+  await db.prepare(
     `INSERT INTO otps (id, phone, otp_hash, expires_at, attempts, verified_at, created_at)
      VALUES (?, ?, ?, ?, 0, NULL, ?)`
   ).run(otpId, phone, otpHash, expiresAt, nowIso());
@@ -152,14 +152,14 @@ export async function verifySubmittedOtp(rawPhone: string, submittedOtp: string)
   const db = getDb();
 
   // Find the latest active OTP for this phone
-  const otpRecord = db
+  const otpRecord = (await db
     .prepare(
       `SELECT id, otp_hash, expires_at, attempts, verified_at
        FROM otps
        WHERE phone = ? AND verified_at IS NULL
        ORDER BY created_at DESC LIMIT 1`
     )
-    .get(phone) as {
+    .get(phone)) as {
     id: string;
     otp_hash: string;
     expires_at: string;
@@ -178,7 +178,7 @@ export async function verifySubmittedOtp(rawPhone: string, submittedOtp: string)
 
   // Check attempt limit
   if (otpRecord.attempts >= MAX_ATTEMPTS) {
-    db.prepare(`UPDATE otps SET verified_at = 'EXCEEDED' WHERE id = ?`).run(otpRecord.id);
+    await db.prepare(`UPDATE otps SET verified_at = 'EXCEEDED' WHERE id = ?`).run(otpRecord.id);
     return { ok: false, error: "Too many failed attempts. This OTP has been invalidated. Please request a new OTP." };
   }
 
@@ -187,10 +187,10 @@ export async function verifySubmittedOtp(rawPhone: string, submittedOtp: string)
 
   if (!isValid) {
     const updatedAttempts = otpRecord.attempts + 1;
-    db.prepare(`UPDATE otps SET attempts = ? WHERE id = ?`).run(updatedAttempts, otpRecord.id);
+    await db.prepare(`UPDATE otps SET attempts = ? WHERE id = ?`).run(updatedAttempts, otpRecord.id);
     const remaining = MAX_ATTEMPTS - updatedAttempts;
     if (remaining <= 0) {
-      db.prepare(`UPDATE otps SET verified_at = 'EXCEEDED' WHERE id = ?`).run(otpRecord.id);
+      await db.prepare(`UPDATE otps SET verified_at = 'EXCEEDED' WHERE id = ?`).run(otpRecord.id);
       return { ok: false, error: "Too many incorrect attempts. Please request a new OTP." };
     }
     return {
@@ -200,12 +200,12 @@ export async function verifySubmittedOtp(rawPhone: string, submittedOtp: string)
   }
 
   // Mark OTP as successfully verified
-  db.prepare(`UPDATE otps SET verified_at = ? WHERE id = ?`).run(nowIso(), otpRecord.id);
+  await db.prepare(`UPDATE otps SET verified_at = ? WHERE id = ?`).run(nowIso(), otpRecord.id);
 
   // Check if user exists in database
-  const user = db
+  const user = (await db
     .prepare(`SELECT id, phone, name, role, language FROM users WHERE phone = ?`)
-    .get(phone) as { id: string; phone: string; name: string; role: "FARMER" | "STAFF" | "ADMIN"; language?: string } | undefined;
+    .get(phone)) as { id: string; phone: string; name: string; role: "FARMER" | "STAFF" | "ADMIN"; language?: string } | undefined;
 
   if (!user) {
     // Brand new farmer user

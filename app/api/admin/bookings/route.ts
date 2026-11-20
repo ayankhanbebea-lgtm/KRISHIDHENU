@@ -15,7 +15,6 @@ export async function GET(req: NextRequest) {
   const session = await getSession(req);
   if (!session || session.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const db = getDb();
-  const dbIdentifier = process.env.DATABASE_PATH ? "custom_env_db" : "default_sqlite_db";
 
   const url = new URL(req.url);
   const rawDate = url.searchParams.get("date") || "";
@@ -33,7 +32,7 @@ export async function GET(req: NextRequest) {
 
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
-  const bookings = db.prepare(`
+  const bookings = await db.prepare(`
     SELECT b.id, b.token, b.status, b.quantity_quintal as quantityQuintal, b.actual_quantity as actualQuantity,
            b.created_at as createdAt, u.name as farmerName, u.phone as farmerPhone,
            c.name as centreName, cr.name as cropName, s.date, s.start_time as startTime,
@@ -53,16 +52,17 @@ export async function GET(req: NextRequest) {
     LIMIT ? OFFSET ?
   `).all(...vals, limit, offset);
 
-  const totalRow = db.prepare(`
+  const totalRow = (await db.prepare(`
     SELECT COUNT(*) as c FROM bookings b
     JOIN slots s ON b.slot_id = s.id
     ${where}
-  `).get(...vals) as { c: number };
+  `).get(...vals)) as { c: number } | undefined;
+  const total = totalRow?.c ?? 0;
 
   const duration = Date.now() - reqStart;
-  console.log(`[ADMIN_BOOKINGS_TRACE] reqId=${requestId} time=${timestamp} db=${dbIdentifier} date=${rawDate || "all"} centre=${centreId || "all"} total=${totalRow.c} duration=${duration}ms`);
+  console.log(`[ADMIN_BOOKINGS_TRACE] reqId=${requestId} time=${timestamp} total=${total} duration=${duration}ms`);
 
-  const response = NextResponse.json({ bookings, total: totalRow.c, page, limit, requestId, timestamp });
+  const response = NextResponse.json({ bookings, total, page, limit, requestId, timestamp });
   response.headers.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
   response.headers.set("Pragma", "no-cache");
   response.headers.set("Expires", "0");
@@ -79,17 +79,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
   const db = getDb();
-  const booking = db.prepare(`SELECT id, status, token, farmer_id as farmerId FROM bookings WHERE id = ?`).get(body.bookingId) as any;
+  const booking = (await db.prepare(`SELECT id, status, token, farmer_id as farmerId FROM bookings WHERE id = ?`).get(body.bookingId)) as any;
   if (!booking) return NextResponse.json({ error: "Booking not found" }, { status: 404 });
   if (["PAYMENT_COMPLETED", "CANCELLED"].includes(booking.status)) {
     return NextResponse.json({ error: `Cannot cancel a ${booking.status} booking` }, { status: 409 });
   }
-  db.prepare(`UPDATE bookings SET status = 'CANCELLED', updated_at = ? WHERE id = ?`).run(nowIso(), body.bookingId);
+  await db.prepare(`UPDATE bookings SET status = 'CANCELLED', updated_at = ? WHERE id = ?`).run(nowIso(), body.bookingId);
   // Get farmer user_id for notification
-  const farmerUser = db.prepare(`SELECT u.id FROM farmer_profiles fp JOIN users u ON fp.user_id = u.id WHERE fp.id = ?`).get(booking.farmerId) as any;
+  const farmerUser = (await db.prepare(`SELECT u.id FROM farmer_profiles fp JOIN users u ON fp.user_id = u.id WHERE fp.id = ?`).get(booking.farmerId)) as any;
   if (farmerUser) {
-    sendNotification(farmerUser.id, "BOOKING_CANCELLED", `Your booking ${booking.token} was cancelled by admin.`, body.bookingId);
+    await sendNotification(farmerUser.id, "BOOKING_CANCELLED", `Your booking ${booking.token} was cancelled by admin.`, body.bookingId);
   }
-  recordAudit(session.id, "ADMIN_CANCEL_BOOKING", "booking", body.bookingId);
+  await recordAudit(session.id, "ADMIN_CANCEL_BOOKING", "booking", body.bookingId);
   return NextResponse.json({ ok: true });
 }

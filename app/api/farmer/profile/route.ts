@@ -9,7 +9,7 @@ export async function GET() {
   }
 
   const db = getDb();
-  let profile = db
+  let profile = (await db
     .prepare(
       `SELECT u.id as userId, u.name, u.phone, u.language,
               fp.id as farmerId, fp.address, fp.district, fp.state, fp.farmer_code as farmerCode
@@ -17,19 +17,19 @@ export async function GET() {
        LEFT JOIN farmer_profiles fp ON fp.user_id = u.id
        WHERE u.id = ?`
     )
-    .get(session.id) as any;
+    .get(session.id)) as any;
 
   // Auto-heal: If profile record is missing in farmer_profiles table, create it immediately
   if (profile && !profile.farmerId) {
     const newFarmerId = newId("fp_");
     const farmerCode = `FP-${Math.floor(1000 + Math.random() * 9000)}`;
     try {
-      db.prepare(`
+      await db.prepare(`
         INSERT INTO farmer_profiles (id, user_id, farmer_code, district, state, language, created_at, updated_at)
         VALUES (?, ?, ?, 'Jaipur', 'Rajasthan', 'en', ?, ?)
       `).run(newFarmerId, session.id, farmerCode, nowIso(), nowIso());
 
-      profile = db
+      profile = (await db
         .prepare(
           `SELECT u.id as userId, u.name, u.phone, u.language,
                   fp.id as farmerId, fp.address, fp.district, fp.state, fp.farmer_code as farmerCode
@@ -37,7 +37,7 @@ export async function GET() {
            LEFT JOIN farmer_profiles fp ON fp.user_id = u.id
            WHERE u.id = ?`
         )
-        .get(session.id) as any;
+        .get(session.id)) as any;
     } catch (e) {
       console.error("[Profile Auto-Create Error]", e);
     }

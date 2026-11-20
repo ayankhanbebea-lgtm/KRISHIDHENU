@@ -1,62 +1,48 @@
-/**
- * Real-time Booking Synchronization & Consistency Test
- * Validates Phase 4:
- * 1. Farmer booking creation
- * 2. Simultaneous Staff dashboard queue fetch
- * 3. Rapid repeated refreshes (20+ queries) ensuring 0 disappearance / flicker
- * 4. Admin dashboard synchronization
- * 5. Status advancement by Staff and propagation across all views
- * 6. Multi-farmer simultaneous booking consistency
- */
-
 import { getDb, newId, nowIso } from "../lib/db";
-import { generateToken, nextQueuePosition } from "../lib/services";
 import { getTodayIST } from "../lib/format";
+import { generateToken, nextQueuePosition } from "../lib/services";
 
 async function run() {
   console.log("====================================================");
-  console.log("KRISHIDHENU BOOKING SYNCHRONIZATION & CONSISTENCY TEST");
+  console.log("KRISHIDHENU PRODUCTION BOOKING CONSISTENCY TEST");
   console.log("====================================================");
 
   const db = getDb();
   const todayIST = getTodayIST();
-  console.log(`[INFO] Testing date (Asia/Kolkata): ${todayIST}`);
 
-  // 1. Get JPR01 centre
-  const centre = db.prepare(`SELECT id, name, code FROM procurement_centres WHERE code = 'JPR01'`).get() as any;
-  if (!centre) throw new Error("JPR01 centre not found");
-  console.log(`[STEP 1] Found centre: ${centre.name} (${centre.code}, id=${centre.id})`);
+  // 1. Identify Centre 01 and Default Farmer
+  const centre = (await db.prepare(`SELECT id, name, code FROM procurement_centres WHERE code = 'JPR01'`).get()) as any;
+  if (!centre) throw new Error("Centre JPR01 not found");
+  console.log(`[STEP 1] Target Centre: ${centre.name} (${centre.code}, ID: ${centre.id})`);
 
-  // 2. Get Farmer 1 (Ramesh Kumar - 9829124370)
-  const farmerUser = db.prepare(`SELECT id FROM users WHERE phone = '9829124370'`).get() as any;
-  const farmerProfile = db.prepare(`SELECT id FROM farmer_profiles WHERE user_id = ?`).get(farmerUser.id) as any;
-  console.log(`[STEP 2] Found farmer: Ramesh Kumar (profile=${farmerProfile.id})`);
+  const farmer = (await db.prepare(`SELECT id, name, phone FROM users WHERE phone = '9829124370'`).get()) as any;
+  if (!farmer) throw new Error("Default farmer 9829124370 not found");
+  const farmerProfile = (await db.prepare(`SELECT id FROM farmer_profiles WHERE user_id = ?`).get(farmer.id)) as any;
+  console.log(`[STEP 2] Test Farmer: ${farmer.name} (${farmer.phone}, Profile ID: ${farmerProfile.id})`);
 
   // Clean existing test bookings for this slot/centre today to have a clean slate
-  const slot = db.prepare(`SELECT id, capacity FROM slots WHERE centre_id = ? AND date = ? LIMIT 1`).get(centre.id, todayIST) as any;
+  const slot = (await db.prepare(`SELECT id, capacity FROM slots WHERE centre_id = ? AND date = ? LIMIT 1`).get(centre.id, todayIST)) as any;
   if (!slot) throw new Error(`Slot for ${todayIST} not found`);
 
   // 3. Create Booking 1
-  const { token, seq } = generateToken("WHT", centre.id, todayIST);
+  const { token, seq } = await generateToken("WHT", centre.id, todayIST);
   const bookingId = newId("bkg_test_");
-  db.exec("BEGIN IMMEDIATE");
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO bookings (id, farmer_id, centre_id, crop_id, slot_id, quantity_quintal, token, token_seq, status, created_at, updated_at)
     VALUES (?, ?, ?, (SELECT id FROM crops WHERE code = 'WHT'), ?, 25.0, ?, ?, 'BOOKED', ?, ?)
   `).run(bookingId, farmerProfile.id, centre.id, slot.id, token, seq, nowIso(), nowIso());
 
-  const pos = nextQueuePosition(centre.id, todayIST);
-  db.prepare(`
+  const pos = await nextQueuePosition(centre.id, todayIST);
+  await db.prepare(`
     INSERT INTO queue_entries (id, booking_id, centre_id, date, position, created_at)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run(newId("q_test_"), bookingId, centre.id, todayIST, pos, nowIso());
-  db.exec("COMMIT");
 
   console.log(`[STEP 3] Booking created successfully: Token=${token}, Position=${pos}`);
 
   // 4. Query Staff Queue API Simulation (using exact SQL from staff/queue/route.ts)
-  const getStaffQueue = () => {
-    return db.prepare(`
+  const getStaffQueue = async () => {
+    return (await db.prepare(`
       SELECT b.id, b.token, b.status, b.quantity_quintal as quantityQuintal,
              u.name as farmerName, u.phone as farmerPhone,
              s.date as slotDate, COALESCE(q.position, 1) as position
@@ -67,10 +53,10 @@ async function run() {
       LEFT JOIN queue_entries q ON q.booking_id = b.id
       WHERE b.centre_id = ? AND s.date = ?
       ORDER BY s.date ASC, COALESCE(q.position, 999) ASC
-    `).all(centre.id, todayIST) as any[];
+    `).all(centre.id, todayIST)) as any[];
   };
 
-  const initialRows = getStaffQueue();
+  const initialRows = await getStaffQueue();
   const foundInitial = initialRows.find(r => r.token === token);
   if (!foundInitial) {
     throw new Error(`CRITICAL: Booking ${token} was NOT returned by Staff Queue immediately after creation!`);
@@ -81,7 +67,7 @@ async function run() {
   console.log(`[STEP 5] Simulating 25 rapid successive polling cycles...`);
   let disappearedCount = 0;
   for (let i = 1; i <= 25; i++) {
-    const rows = getStaffQueue();
+    const rows = await getStaffQueue();
     const hasToken = rows.some(r => r.token === token);
     if (!hasToken) {
       disappearedCount++;
@@ -95,7 +81,7 @@ async function run() {
   console.log(`  ✅ All 25/25 polling cycles returned booking ${token} with 100% consistency (0 disappearances).`);
 
   // 6. Admin Queue Verification
-  const adminQueue = db.prepare(`
+  const adminQueue = (await db.prepare(`
     SELECT b.id, b.token, b.status, u.name as farmerName, q.position
     FROM queue_entries q
     JOIN bookings b ON q.booking_id = b.id
@@ -103,7 +89,7 @@ async function run() {
     JOIN users u ON fp.user_id = u.id
     WHERE q.centre_id = ? AND q.date = ?
     ORDER BY q.position ASC
-  `).all(centre.id, todayIST) as any[];
+  `).all(centre.id, todayIST)) as any[];
 
   const adminFound = adminQueue.find(r => r.token === token);
   if (!adminFound) {
@@ -113,10 +99,10 @@ async function run() {
 
   // 7. Update status as staff (ARRIVED -> WEIGHING -> PROCUREMENT_COMPLETED)
   console.log(`[STEP 7] Updating booking status as Staff to 'ARRIVED'...`);
-  db.prepare(`UPDATE bookings SET status = 'ARRIVED', updated_at = ? WHERE id = ?`).run(nowIso(), bookingId);
+  await db.prepare(`UPDATE bookings SET status = 'ARRIVED', updated_at = ? WHERE id = ?`).run(nowIso(), bookingId);
 
   // Check that updated status appears in Staff Queue
-  const updatedStaffRows = getStaffQueue();
+  const updatedStaffRows = await getStaffQueue();
   const updatedRow = updatedStaffRows.find(r => r.token === token);
   if (!updatedRow || updatedRow.status !== "ARRIVED") {
     throw new Error(`Updated status 'ARRIVED' not reflected in staff queue (got ${updatedRow?.status})`);
@@ -124,7 +110,7 @@ async function run() {
   console.log(`  ✅ Staff queue reflects status: ${updatedRow.status}`);
 
   // Check that updated status appears in Admin View
-  const updatedAdminRow = db.prepare(`SELECT status FROM bookings WHERE id = ?`).get(bookingId) as any;
+  const updatedAdminRow = (await db.prepare(`SELECT status FROM bookings WHERE id = ?`).get(bookingId)) as any;
   if (updatedAdminRow.status !== "ARRIVED") {
     throw new Error(`Updated status not reflected in admin database`);
   }
@@ -139,26 +125,24 @@ async function run() {
 
   const createdMultiTokens: string[] = [];
   for (const farmer of additionalFarmers) {
-    const u = db.prepare(`SELECT id FROM users WHERE phone = ?`).get(farmer.phone) as any;
-    const fp = db.prepare(`SELECT id FROM farmer_profiles WHERE user_id = ?`).get(u.id) as any;
-    const tkn = generateToken("WHT", centre.id, todayIST);
+    const u = (await db.prepare(`SELECT id FROM users WHERE phone = ?`).get(farmer.phone)) as any;
+    const fp = (await db.prepare(`SELECT id FROM farmer_profiles WHERE user_id = ?`).get(u.id)) as any;
+    const tkn = await generateToken("WHT", centre.id, todayIST);
     const bId = newId("bkg_multi_");
-    const p = nextQueuePosition(centre.id, todayIST);
+    const p = await nextQueuePosition(centre.id, todayIST);
 
-    db.exec("BEGIN IMMEDIATE");
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO bookings (id, farmer_id, centre_id, crop_id, slot_id, quantity_quintal, token, token_seq, status, created_at, updated_at)
       VALUES (?, ?, ?, (SELECT id FROM crops WHERE code = 'WHT'), ?, 30.0, ?, ?, 'BOOKED', ?, ?)
     `).run(bId, fp.id, centre.id, slot.id, tkn.token, tkn.seq, nowIso(), nowIso());
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO queue_entries (id, booking_id, centre_id, date, position, created_at)
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(newId("q_multi_"), bId, centre.id, todayIST, p, nowIso());
-    db.exec("COMMIT");
     createdMultiTokens.push(tkn.token);
   }
 
-  const multiStaffRows = getStaffQueue();
+  const multiStaffRows = await getStaffQueue();
   for (const t of createdMultiTokens) {
     if (!multiStaffRows.some(r => r.token === t)) {
       throw new Error(`Multi-farmer token ${t} missing from staff queue!`);

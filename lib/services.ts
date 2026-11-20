@@ -11,20 +11,19 @@ const STANDARD_SLOT_WINDOWS = [
 /**
  * Ensures standard slots exist in the database for all active centres on a given date.
  */
-export function ensureSlotsForDate(rawDate?: string) {
+export async function ensureSlotsForDate(rawDate?: string): Promise<void> {
   const date = normalizeDateToYMD(rawDate);
   const db = getDb();
 
-  const centres = db.prepare(`SELECT id FROM procurement_centres`).all() as { id: string }[];
+  const centres = (await db.prepare(`SELECT id FROM procurement_centres`).all()) as { id: string }[];
   
   for (const centre of centres) {
-    const existing = (
-      db.prepare(`SELECT COUNT(*) as c FROM slots WHERE centre_id = ? AND date = ?`).get(centre.id, date) as { c: number }
-    ).c;
+    const existingRow = (await db.prepare(`SELECT COUNT(*) as c FROM slots WHERE centre_id = ? AND date = ?`).get(centre.id, date)) as { c: number } | undefined;
+    const existing = existingRow?.c ?? 0;
     
     if (existing === 0) {
       for (const win of STANDARD_SLOT_WINDOWS) {
-        db.prepare(
+        await db.prepare(
           `INSERT OR IGNORE INTO slots (id, centre_id, date, start_time, end_time, capacity) VALUES (?, ?, ?, ?, ?, ?)`
         ).run(newId("slt_"), centre.id, date, win.startTime, win.endTime, win.capacity);
       }
@@ -33,77 +32,77 @@ export function ensureSlotsForDate(rawDate?: string) {
 }
 
 // ---------- Token generation (server-side, globally collision-safe per crop) ----------
-export function generateToken(cropCode: string, centreId?: string, date?: string): { token: string; seq: number } {
+export async function generateToken(cropCode: string, centreId?: string, date?: string): Promise<{ token: string; seq: number }> {
   const db = getDb();
-  const row = db
+  const row = (await db
     .prepare(
       `SELECT COALESCE(MAX(token_seq), 0) as m FROM bookings
        WHERE crop_id IN (SELECT id FROM crops WHERE code = ?)`
     )
-    .get(cropCode) as { m: number };
-  const seq = Math.max(row.m + 1, 100);
+    .get(cropCode)) as { m: number } | undefined;
+  const seq = Math.max((row?.m ?? 0) + 1, 100);
   const token = `${cropCode}-${String(seq).padStart(4, "0")}`;
   return { token, seq };
 }
 
 // ---------- Queue ----------
-export function nextQueuePosition(centreId: string, rawDate?: string): number {
+export async function nextQueuePosition(centreId: string, rawDate?: string): Promise<number> {
   const date = normalizeDateToYMD(rawDate);
   const db = getDb();
-  const row = db
+  const row = (await db
     .prepare(`SELECT COALESCE(MAX(position), 0) as m FROM queue_entries WHERE centre_id = ? AND date = ?`)
-    .get(centreId, date) as { m: number };
-  return row.m + 1;
+    .get(centreId, date)) as { m: number } | undefined;
+  return (row?.m ?? 0) + 1;
 }
 
-export function farmersAhead(centreId: string, rawDate: string, position: number): number {
+export async function farmersAhead(centreId: string, rawDate: string, position: number): Promise<number> {
   const date = normalizeDateToYMD(rawDate);
   const db = getDb();
   // "Ahead" = queue entries on the same date with a lower position whose booking is still active
   // (i.e. not completed, cancelled, or marked no-show).
-  const row = db
+  const row = (await db
     .prepare(
       `SELECT COUNT(*) as c FROM queue_entries q
        JOIN bookings b ON q.booking_id = b.id
        WHERE q.centre_id = ? AND q.date = ? AND q.position < ?
        AND b.status NOT IN ('PROCUREMENT_COMPLETED','PAYMENT_PROCESSING','PAYMENT_COMPLETED','CANCELLED','NO_SHOW')`
     )
-    .get(centreId, date, position) as { c: number };
-  return row.c;
+    .get(centreId, date, position)) as { c: number } | undefined;
+  return row?.c ?? 0;
 }
 
-export function estimateWaitMinutes(centreId: string, farmersAheadCount: number): number {
+export async function estimateWaitMinutes(centreId: string, farmersAheadCount: number): Promise<number> {
   const db = getDb();
-  const centre = db.prepare(`SELECT avg_service_time_mins FROM procurement_centres WHERE id = ?`).get(centreId) as
+  const centre = (await db.prepare(`SELECT avg_service_time_mins FROM procurement_centres WHERE id = ?`).get(centreId)) as
     | { avg_service_time_mins: number }
     | undefined;
   const avg = centre?.avg_service_time_mins ?? 5;
   return Math.max(0, farmersAheadCount * avg);
 }
 
-export function currentlyServingToken(centreId: string, rawDate?: string): string | null {
+export async function currentlyServingToken(centreId: string, rawDate?: string): Promise<string | null> {
   const date = normalizeDateToYMD(rawDate);
   const db = getDb();
   // 1. Prefer farmer actively being processed (WEIGHING, PROCUREMENT_IN_PROGRESS, VERIFIED, ARRIVED)
-  const inProgress = db
+  const inProgress = (await db
     .prepare(
       `SELECT b.token FROM queue_entries q JOIN bookings b ON q.booking_id = b.id
        WHERE q.centre_id = ? AND q.date = ?
        AND b.status IN ('WEIGHING','PROCUREMENT_IN_PROGRESS','VERIFIED','ARRIVED')
        ORDER BY q.called_at DESC, q.position ASC LIMIT 1`
     )
-    .get(centreId, date) as { token: string } | undefined;
+    .get(centreId, date)) as { token: string } | undefined;
   if (inProgress?.token) return inProgress.token;
 
   // 2. Otherwise, the most recently called booking that is not terminal
-  const called = db
+  const called = (await db
     .prepare(
       `SELECT b.token FROM queue_entries q JOIN bookings b ON q.booking_id = b.id
        WHERE q.centre_id = ? AND q.date = ? AND q.called_at IS NOT NULL
        AND b.status NOT IN ('PROCUREMENT_COMPLETED','PAYMENT_PROCESSING','PAYMENT_COMPLETED','CANCELLED','NO_SHOW')
        ORDER BY q.called_at DESC LIMIT 1`
     )
-    .get(centreId, date) as { token: string } | undefined;
+    .get(centreId, date)) as { token: string } | undefined;
   return called?.token ?? null;
 }
 
@@ -116,44 +115,43 @@ export type CentreLoadInfo = {
   estimatedWaitMins: number;
 };
 
-export function centreLoad(centreId: string, rawDate?: string): CentreLoadInfo {
+export async function centreLoad(centreId: string, rawDate?: string): Promise<CentreLoadInfo> {
   const date = normalizeDateToYMD(rawDate);
   const db = getDb();
-  ensureSlotsForDate(date);
+  await ensureSlotsForDate(date);
 
-
-  const centre = db.prepare(`SELECT high_load_threshold, avg_service_time_mins, daily_capacity FROM procurement_centres WHERE id = ?`).get(centreId) as
+  const centre = (await db.prepare(`SELECT high_load_threshold, avg_service_time_mins, daily_capacity FROM procurement_centres WHERE id = ?`).get(centreId)) as
     | { high_load_threshold: number; avg_service_time_mins: number; daily_capacity: number }
     | undefined;
   const threshold = centre?.high_load_threshold ?? 50;
   const avgServiceTime = centre?.avg_service_time_mins ?? 5;
 
   // Total slot capacity for that centre on that date
-  const capRow = db
+  const capRow = (await db
     .prepare(`SELECT COALESCE(SUM(capacity), 120) as totalCap FROM slots WHERE centre_id = ? AND date = ?`)
-    .get(centreId, date) as { totalCap: number };
+    .get(centreId, date)) as { totalCap: number } | undefined;
   const totalCapacity = capRow?.totalCap || (centre?.daily_capacity ?? 120);
 
   // Confirmed non-cancelled bookings on this date
-  const bookedRow = db
+  const bookedRow = (await db
     .prepare(
       `SELECT COUNT(*) as c FROM bookings b
        JOIN slots s ON b.slot_id = s.id
        WHERE b.centre_id = ? AND s.date = ? AND b.status != 'CANCELLED'`
     )
-    .get(centreId, date) as { c: number };
-  const bookedCount = bookedRow.c;
+    .get(centreId, date)) as { c: number } | undefined;
+  const bookedCount = bookedRow?.c ?? 0;
   const availableCapacity = Math.max(0, totalCapacity - bookedCount);
 
   // Currently waiting farmers in active queue on that date
-  const waitingRow = db
+  const waitingRow = (await db
     .prepare(
       `SELECT COUNT(*) as c FROM queue_entries q JOIN bookings b ON q.booking_id = b.id
        WHERE q.centre_id = ? AND q.date = ?
        AND b.status NOT IN ('PROCUREMENT_COMPLETED','PAYMENT_PROCESSING','PAYMENT_COMPLETED','CANCELLED','NO_SHOW')`
     )
-    .get(centreId, date) as { c: number };
-  const waiting = waitingRow.c;
+    .get(centreId, date)) as { c: number } | undefined;
+  const waiting = waitingRow?.c ?? 0;
   const estimatedWaitMins = waiting * avgServiceTime;
 
   let load: "LOW_LOAD" | "NORMAL" | "BUSY" | "HIGH_LOAD" = "LOW_LOAD";
@@ -165,18 +163,18 @@ export function centreLoad(centreId: string, rawDate?: string): CentreLoadInfo {
 }
 
 // ---------- Notifications (in-app; abstraction point for a real SMS/WhatsApp gateway) ----------
-export function sendNotification(userId: string, type: string, message: string, bookingId?: string) {
+export async function sendNotification(userId: string, type: string, message: string, bookingId?: string): Promise<void> {
   const db = getDb();
-  db.prepare(
+  await db.prepare(
     `INSERT INTO notifications (id, user_id, booking_id, type, message, read, created_at)
      VALUES (?, ?, ?, ?, ?, 0, ?)`
   ).run(newId("ntf_"), userId, bookingId ?? null, type, message, nowIso());
 }
 
 // ---------- Audit log ----------
-export function recordAudit(userId: string, action: string, entity: string, entityId?: string) {
+export async function recordAudit(userId: string, action: string, entity: string, entityId?: string): Promise<void> {
   const db = getDb();
-  db.prepare(
+  await db.prepare(
     `INSERT INTO audit_logs (id, user_id, action, entity, entity_id, created_at) VALUES (?, ?, ?, ?, ?, ?)`
   ).run(newId("aud_"), userId, action, entity, entityId ?? null, nowIso());
 }
@@ -195,12 +193,12 @@ export type CentreOption = {
   estimatedWaitMins: number;
 };
 
-export function rankCentres(rawDate?: string): (CentreOption & { score: number; reason: string })[] {
+export async function rankCentres(rawDate?: string): Promise<(CentreOption & { score: number; reason: string })[]> {
   const date = normalizeDateToYMD(rawDate);
   const db = getDb();
-  ensureSlotsForDate(date);
+  await ensureSlotsForDate(date);
 
-  let centres = db.prepare(`SELECT id, name, code, district, distance_km FROM procurement_centres WHERE active = 1 ORDER BY code ASC`).all() as {
+  let centres = (await db.prepare(`SELECT id, name, code, district, distance_km FROM procurement_centres WHERE active = 1 ORDER BY code ASC`).all()) as {
     id: string;
     name: string;
     code: string;
@@ -210,8 +208,8 @@ export function rankCentres(rawDate?: string): (CentreOption & { score: number; 
 
   if (centres.length === 0) {
     ensureBaselineData(db);
-    ensureSlotsForDate(date);
-    centres = db.prepare(`SELECT id, name, code, district, distance_km FROM procurement_centres WHERE active = 1 ORDER BY code ASC`).all() as {
+    await ensureSlotsForDate(date);
+    centres = (await db.prepare(`SELECT id, name, code, district, distance_km FROM procurement_centres WHERE active = 1 ORDER BY code ASC`).all()) as {
       id: string;
       name: string;
       code: string;
@@ -226,33 +224,35 @@ export function rankCentres(rawDate?: string): (CentreOption & { score: number; 
     JPR03: 15,
   };
 
-  const options = centres.map((c) => {
-    const { totalCapacity, availableCapacity, waiting, load, estimatedWaitMins } = centreLoad(c.id, date);
-    const distanceKm = c.distance_km ?? (defaultDistances[c.code] || 10);
-    
-    // Rule-based score: lower waiting queue + lower wait time + available capacity = higher rank
-    const score = waiting * 2 + estimatedWaitMins + (availableCapacity === 0 ? 1000 : 0);
-    let reason = "Shortest queue and fastest available slot.";
-    if (availableCapacity === 0) reason = "Capacity reached for this date.";
-    else if (load === "HIGH_LOAD") reason = "High queue right now — expect longer wait.";
-    else if (load === "BUSY") reason = "Moderate waiting queue.";
-    else if (waiting === 0) reason = "No waiting queue — immediate service available.";
+  const options = await Promise.all(
+    centres.map(async (c) => {
+      const { totalCapacity, availableCapacity, waiting, load, estimatedWaitMins } = await centreLoad(c.id, date);
+      const distanceKm = c.distance_km ?? (defaultDistances[c.code] || 10);
+      
+      // Rule-based score: lower waiting queue + lower wait time + available capacity = higher rank
+      const score = waiting * 2 + estimatedWaitMins + (availableCapacity === 0 ? 1000 : 0);
+      let reason = "Shortest queue and fastest available slot.";
+      if (availableCapacity === 0) reason = "Capacity reached for this date.";
+      else if (load === "HIGH_LOAD") reason = "High queue right now — expect longer wait.";
+      else if (load === "BUSY") reason = "Moderate waiting queue.";
+      else if (waiting === 0) reason = "No waiting queue — immediate service available.";
 
-    return {
-      id: c.id,
-      name: c.name,
-      code: c.code,
-      district: c.district,
-      distanceKm,
-      totalCapacity,
-      availableCapacity,
-      waiting,
-      load,
-      estimatedWaitMins,
-      score,
-      reason,
-    };
-  });
+      return {
+        id: c.id,
+        name: c.name,
+        code: c.code,
+        district: c.district,
+        distanceKm,
+        totalCapacity,
+        availableCapacity,
+        waiting,
+        load,
+        estimatedWaitMins,
+        score,
+        reason,
+      };
+    })
+  );
 
   return options.sort((a, b) => a.score - b.score);
 }
@@ -260,42 +260,43 @@ export function rankCentres(rawDate?: string): (CentreOption & { score: number; 
 /**
  * Returns available slots for a given centre and date with real calculated remaining capacities.
  */
-export function getSlotAvailability(centreId: string, rawDate?: string) {
+export async function getSlotAvailability(centreId: string, rawDate?: string) {
   const date = normalizeDateToYMD(rawDate);
   const db = getDb();
-  ensureSlotsForDate(date);
+  await ensureSlotsForDate(date);
 
-  const rawSlots = db
+  const rawSlots = (await db
     .prepare(
       `SELECT id, date, start_time as startTime, end_time as endTime, capacity
        FROM slots WHERE centre_id = ? AND date = ? ORDER BY start_time`
     )
-    .all(centreId, date) as { id: string; startTime: string; endTime: string; capacity: number }[];
+    .all(centreId, date)) as { id: string; startTime: string; endTime: string; capacity: number }[];
 
-  return rawSlots.map((s) => {
-    const booked = (
-      db.prepare(`SELECT COUNT(*) as c FROM bookings WHERE slot_id = ? AND status != 'CANCELLED'`).get(s.id) as {
+  return Promise.all(
+    rawSlots.map(async (s) => {
+      const bookedRow = (await db.prepare(`SELECT COUNT(*) as c FROM bookings WHERE slot_id = ? AND status != 'CANCELLED'`).get(s.id)) as {
         c: number;
-      }
-    ).c;
-    const remaining = Math.max(0, s.capacity - booked);
-    return {
-      ...s,
-      bookedCount: booked,
-      remaining,
-      isFull: remaining <= 0,
-    };
-  });
+      } | undefined;
+      const booked = bookedRow?.c ?? 0;
+      const remaining = Math.max(0, s.capacity - booked);
+      return {
+        ...s,
+        bookedCount: booked,
+        remaining,
+        isFull: remaining <= 0,
+      };
+    })
+  );
 }
 
 /**
  * Cancel a farmer's active booking.
  */
-export function cancelBooking(bookingId: string, farmerId: string, sessionUserId: string): { ok: boolean; error?: string } {
+export async function cancelBooking(bookingId: string, farmerId: string, sessionUserId: string): Promise<{ ok: boolean; error?: string }> {
   const db = getDb();
-  const booking = db
+  const booking = (await db
     .prepare(`SELECT id, status, farmer_id as farmerId, token FROM bookings WHERE id = ?`)
-    .get(bookingId) as { id: string; status: string; farmerId: string; token: string } | undefined;
+    .get(bookingId)) as { id: string; status: string; farmerId: string; token: string } | undefined;
 
   if (!booking) return { ok: false, error: "Booking not found." };
   if (booking.farmerId !== farmerId) return { ok: false, error: "Unauthorized access to this booking." };
@@ -305,63 +306,59 @@ export function cancelBooking(bookingId: string, farmerId: string, sessionUserId
   }
 
   try {
-    db.exec("BEGIN");
-    db.prepare(`UPDATE bookings SET status = 'CANCELLED', updated_at = ? WHERE id = ?`).run(nowIso(), bookingId);
-    db.exec("COMMIT");
+    await db.prepare(`UPDATE bookings SET status = 'CANCELLED', updated_at = ? WHERE id = ?`).run(nowIso(), bookingId);
 
-    sendNotification(
+    await sendNotification(
       sessionUserId,
       "BOOKING_CANCELLED",
       `Your booking with token ${booking.token} has been cancelled.`,
       bookingId
     );
-    recordAudit(sessionUserId, "BOOKING_CANCELLED", "booking", bookingId);
+    await recordAudit(sessionUserId, "BOOKING_CANCELLED", "booking", bookingId);
 
     return { ok: true };
   } catch {
-    db.exec("ROLLBACK");
     return { ok: false, error: "Failed to cancel booking. Please try again." };
   }
 }
 
 // ---------- Waiting time / congestion insight for admin (from real database data) ----------
-export function adminOverview() {
+export async function adminOverview() {
   const db = getDb();
-  const totalFarmers = (db.prepare(`SELECT COUNT(*) as c FROM users WHERE role = 'FARMER'`).get() as { c: number }).c;
-  const totalStaff = (db.prepare(`SELECT COUNT(*) as c FROM users WHERE role = 'STAFF'`).get() as { c: number }).c;
-  const totalCentres = (db.prepare(`SELECT COUNT(*) as c FROM procurement_centres`).get() as { c: number }).c;
+  const totalFarmers = ((await db.prepare(`SELECT COUNT(*) as c FROM users WHERE role = 'FARMER'`).get()) as { c: number })?.c ?? 0;
+  const totalStaff = ((await db.prepare(`SELECT COUNT(*) as c FROM users WHERE role = 'STAFF'`).get()) as { c: number })?.c ?? 0;
+  const totalCentres = ((await db.prepare(`SELECT COUNT(*) as c FROM procurement_centres`).get()) as { c: number })?.c ?? 0;
   const today = getTodayIST();
-  ensureSlotsForDate(today);
-
+  await ensureSlotsForDate(today);
 
   const todaysBookings = (
-    db.prepare(`SELECT COUNT(*) as c FROM slots s JOIN bookings b ON b.slot_id = s.id WHERE s.date = ? AND b.status != 'CANCELLED'`).get(today) as {
+    (await db.prepare(`SELECT COUNT(*) as c FROM slots s JOIN bookings b ON b.slot_id = s.id WHERE s.date = ? AND b.status != 'CANCELLED'`).get(today)) as {
       c: number;
     }
-  ).c;
+  )?.c ?? 0;
   const activeQueues = (
-    db
+    (await db
       .prepare(
         `SELECT COUNT(*) as c FROM queue_entries q JOIN bookings b ON q.booking_id = b.id
          WHERE q.date = ? AND b.status NOT IN ('PROCUREMENT_COMPLETED','PAYMENT_PROCESSING','PAYMENT_COMPLETED','CANCELLED','NO_SHOW')`
       )
-      .get(today) as { c: number }
-  ).c;
+      .get(today)) as { c: number }
+  )?.c ?? 0;
   const completed = (
-    db.prepare(`SELECT COUNT(*) as c FROM bookings WHERE status IN ('PROCUREMENT_COMPLETED','PAYMENT_PROCESSING','PAYMENT_COMPLETED')`).get() as {
+    (await db.prepare(`SELECT COUNT(*) as c FROM bookings WHERE status IN ('PROCUREMENT_COMPLETED','PAYMENT_PROCESSING','PAYMENT_COMPLETED')`).get()) as {
       c: number;
     }
-  ).c;
+  )?.c ?? 0;
   const pendingPayments = (
-    db.prepare(`SELECT COUNT(*) as c FROM payments WHERE payment_status IN ('PENDING','PROCESSING') OR status IN ('PENDING','PROCESSING')`).get() as { c: number }
-  ).c;
-  const cancelled = (db.prepare(`SELECT COUNT(*) as c FROM bookings WHERE status IN ('CANCELLED','NO_SHOW')`).get() as {
+    (await db.prepare(`SELECT COUNT(*) as c FROM payments WHERE payment_status IN ('PENDING','PROCESSING') OR status IN ('PENDING','PROCESSING')`).get()) as { c: number }
+  )?.c ?? 0;
+  const cancelled = ((await db.prepare(`SELECT COUNT(*) as c FROM bookings WHERE status IN ('CANCELLED','NO_SHOW')`).get()) as {
     c: number;
-  }).c;
-  const totalBookings = (db.prepare(`SELECT COUNT(*) as c FROM bookings`).get() as { c: number }).c;
+  })?.c ?? 0;
+  const totalBookings = ((await db.prepare(`SELECT COUNT(*) as c FROM bookings`).get()) as { c: number })?.c ?? 0;
   const noShowRate = totalBookings ? Math.round((cancelled / totalBookings) * 1000) / 10 : 0;
 
-  const paymentStats = db.prepare(`
+  const paymentStats = (await db.prepare(`
     SELECT
       COUNT(id) as totalCount,
       COALESCE(SUM(CASE WHEN payment_status = 'PAID' OR status = 'PAID' THEN COALESCE(total_amount, amount, 0) ELSE 0 END), 0) as paidAmount,
@@ -372,15 +369,15 @@ export function adminOverview() {
       COUNT(CASE WHEN payment_status = 'FAILED' OR (payment_status IS NULL AND status = 'FAILED') THEN 1 END) as failedCount,
       COUNT(CASE WHEN payment_status = 'ON_HOLD' THEN 1 END) as onHoldCount
     FROM payments
-  `).get() as any;
+  `).get()) as any;
 
-  const centres = db.prepare(`SELECT id, name, code, district FROM procurement_centres ORDER BY name`).all() as {
+  const centres = (await db.prepare(`SELECT id, name, code, district FROM procurement_centres ORDER BY name`).all()) as {
     id: string;
     name: string;
     code: string;
     district: string;
   }[];
-  const centreStatus = centres.map((c) => ({ ...c, ...centreLoad(c.id, today) }));
+  const centreStatus = await Promise.all(centres.map(async (c) => ({ ...c, ...(await centreLoad(c.id, today)) })));
 
   return {
     totalFarmers,

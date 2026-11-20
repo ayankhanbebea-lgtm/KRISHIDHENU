@@ -9,32 +9,33 @@ import { generateIntelligentFarmerResponse, FarmerAssistantContext } from "@/lib
 export const dynamic = "force-dynamic";
 
 // Active Gemini model configuration
-// Only active, supported Google Gemini Developer API models are allowed.
-// Discontinued models (gemini-1.5-flash, gemini-2.0-flash, etc.) are strictly excluded.
+// Supported Google Gemini Developer API models in priority order
 const CANDIDATE_MODELS = [
   process.env.GEMINI_MODEL,
-  "gemini-2.5-flash",
+  "gemini-3.5-flash-lite",
+  "gemini-3.8-flash",
+  "gemini-3.5-flash",
 ].filter((m): m is string => Boolean(m && m.trim()));
 
 const UNIQUE_MODELS = Array.from(new Set(CANDIDATE_MODELS));
 
-function getFarmerContext(farmerId: string, sessionUser: { name: string; phone: string }): FarmerAssistantContext {
+async function getFarmerContext(farmerId: string, sessionUser: { name: string; phone: string }): Promise<FarmerAssistantContext> {
   const db = getDb();
 
   // 1. Farmer Profile (supports either profile id or user id)
-  const profile = db
+  const profile = (await db
     .prepare(
       `SELECT fp.id, fp.farmer_code as farmerCode, fp.district, fp.state, fp.address, u.name, u.phone
        FROM farmer_profiles fp
        JOIN users u ON fp.user_id = u.id
        WHERE fp.id = ? OR fp.user_id = ?`
     )
-    .get(farmerId, farmerId) as any;
+    .get(farmerId, farmerId)) as any;
 
   const actualProfileId = profile?.id || farmerId;
 
   // 2. Active or Latest Booking
-  const activeBooking = db
+  const activeBooking = (await db
     .prepare(
       `SELECT b.id, b.token, b.token_seq as tokenSeq, b.status, b.quantity_quintal as quantityQuintal,
               b.actual_quantity as actualQuantity, b.quality_grade as qualityGrade,
@@ -53,14 +54,14 @@ function getFarmerContext(farmerId: string, sessionUser: { name: string; phone: 
                 b.created_at DESC
        LIMIT 1`
     )
-    .get(actualProfileId) as any;
+    .get(actualProfileId)) as any;
 
   // 3. Queue Real-time Metrics (if active booking exists)
   let queueMetrics = null;
   if (activeBooking && activeBooking.centreId && activeBooking.date) {
-    const ahead = activeBooking.position != null ? farmersAhead(activeBooking.centreId, activeBooking.date, activeBooking.position) : 0;
-    const waitMins = estimateWaitMinutes(activeBooking.centreId, ahead);
-    const serving = currentlyServingToken(activeBooking.centreId, activeBooking.date);
+    const ahead = activeBooking.position != null ? await farmersAhead(activeBooking.centreId, activeBooking.date, activeBooking.position) : 0;
+    const waitMins = await estimateWaitMinutes(activeBooking.centreId, ahead);
+    const serving = await currentlyServingToken(activeBooking.centreId, activeBooking.date);
     queueMetrics = {
       queuePosition: activeBooking.position,
       farmersAhead: ahead,
@@ -72,7 +73,7 @@ function getFarmerContext(farmerId: string, sessionUser: { name: string; phone: 
   // 4. Payment Details (if any booking reached payment)
   let paymentDetails = null;
   if (activeBooking) {
-    const payment = db
+    const payment = (await db
       .prepare(
         `SELECT id, token_number as tokenNumber, crop, final_quantity as finalQuantity,
                 rate_per_unit as ratePerUnit, deductions, final_payable_amount as finalPayableAmount,
@@ -82,14 +83,14 @@ function getFarmerContext(farmerId: string, sessionUser: { name: string; phone: 
          FROM payments
          WHERE booking_id = ?`
       )
-      .get(activeBooking.id) as any;
+      .get(activeBooking.id)) as any;
     if (payment) {
       paymentDetails = payment;
     }
   }
 
   // 5. Official MSP Rates in System
-  const cropsList = db.prepare(`SELECT name, code, msp_rate as mspRate FROM crops ORDER BY name`).all() as any[];
+  const cropsList = (await db.prepare(`SELECT name, code, msp_rate as mspRate FROM crops ORDER BY name`).all()) as any[];
 
   return {
     farmer: {
@@ -177,7 +178,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Please login as a farmer." }, { status: 401 });
     }
 
-    const farmerId = getFarmerProfileId(session.id);
+    const farmerId = (await getFarmerProfileId(session.id)) || session.id;
     if (!farmerId) {
       return NextResponse.json({ error: "Farmer profile not found." }, { status: 404 });
     }
@@ -193,7 +194,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Pull verified real-time database context for this farmer
-    const context = getFarmerContext(farmerId, { name: session.name, phone: session.phone });
+    const context = await getFarmerContext(farmerId, { name: session.name, phone: session.phone });
 
     // Detect language of the incoming message
     const detectedLanguage = detectLanguage(message);

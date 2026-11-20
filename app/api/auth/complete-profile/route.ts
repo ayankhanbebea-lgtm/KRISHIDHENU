@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
     const db = getDb();
 
     // Verify that this phone number had an OTP successfully verified recently (within last 15 mins)
-    const recentVerified = db
+    const recentVerified = await db
       .prepare(
         `SELECT id FROM otps
          WHERE phone = ? AND verified_at IS NOT NULL AND verified_at != 'SUPERSEDED' AND verified_at != 'EXCEEDED'
@@ -36,9 +36,9 @@ export async function POST(req: NextRequest) {
     }
 
     // Check if user already exists
-    let existingUser = db
+    const existingUser = (await db
       .prepare(`SELECT id, phone, name, role FROM users WHERE phone = ?`)
-      .get(phone) as { id: string; phone: string; name: string; role: "FARMER" | "STAFF" | "ADMIN" } | undefined;
+      .get(phone)) as { id: string; phone: string; name: string; role: "FARMER" | "STAFF" | "ADMIN" } | undefined;
 
     let userId = existingUser?.id;
 
@@ -47,14 +47,13 @@ export async function POST(req: NextRequest) {
       const farmerProfileId = newId("frm_");
       const farmerCode = `FP-${Date.now().toString().slice(-4)}`;
 
-      db.exec("BEGIN");
       try {
-        db.prepare(
+        await db.prepare(
           `INSERT INTO users (id, phone, role, name, language, created_at, updated_at)
            VALUES (?, ?, 'FARMER', ?, ?, ?, ?)`
         ).run(userId, phone, name, language || "en", nowIso(), nowIso());
 
-        db.prepare(
+        await db.prepare(
           `INSERT INTO farmer_profiles (id, user_id, address, district, state, farmer_code, language, created_at, updated_at)
            VALUES (?, ?, ?, ?, 'Rajasthan', ?, ?, ?, ?)`
         ).run(
@@ -69,14 +68,11 @@ export async function POST(req: NextRequest) {
         );
 
         // Add welcome notification
-        db.prepare(
+        await db.prepare(
           `INSERT INTO notifications (id, user_id, booking_id, type, message, read, created_at)
            VALUES (?, ?, NULL, 'WELCOME', 'Welcome to KRISHIDHENU. You can now book your procurement slots.', 0, ?)`
         ).run(newId("ntf_"), userId, nowIso());
-
-        db.exec("COMMIT");
       } catch (e) {
-        db.exec("ROLLBACK");
         console.error("Profile creation error:", e);
         return NextResponse.json({ error: "Failed to create farmer profile." }, { status: 500 });
       }

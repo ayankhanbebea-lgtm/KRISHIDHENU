@@ -16,12 +16,12 @@ export async function GET(req: Request) {
   if (!session || session.role !== "FARMER") {
     return NextResponse.json({ error: "Please login as a farmer." }, { status: 401 });
   }
-  const farmerId = getFarmerProfileId(session.id);
+  const farmerId = await getFarmerProfileId(session.id);
   if (!farmerId) return NextResponse.json({ bookings: [], activeCount: 0, maxLimit: MAX_ACTIVE_BOOKINGS, isMaxReached: false, booking: null });
 
   const db = getDb();
   const placeholders = ACTIVE_BOOKING_STATUSES.map(() => "?").join(",");
-  const rawBookings = db
+  const rawBookings = (await db
     .prepare(
       `SELECT b.id, b.token, b.status, b.quantity_quintal as quantityQuintal, b.actual_quantity as actualQuantity,
               b.created_at as createdAt,
@@ -37,38 +37,39 @@ export async function GET(req: Request) {
        WHERE b.farmer_id = ? AND b.status IN (${placeholders})
        ORDER BY s.date ASC, s.start_time ASC, b.created_at ASC`
     )
-    .all(farmerId, ...ACTIVE_BOOKING_STATUSES) as any[];
+    .all(farmerId, ...ACTIVE_BOOKING_STATUSES)) as any[];
 
-  const bookings = rawBookings.map((b) => {
-    const ahead = b.position != null ? farmersAhead(b.centreId, b.date, b.position) : 0;
-    const waitMins = estimateWaitMinutes(b.centreId, ahead);
-    const serving = currentlyServingToken(b.centreId, b.date);
+  const bookings = await Promise.all(
+    rawBookings.map(async (b) => {
+      const ahead = b.position != null ? await farmersAhead(b.centreId, b.date, b.position) : 0;
+      const waitMins = await estimateWaitMinutes(b.centreId, ahead);
+      const serving = await currentlyServingToken(b.centreId, b.date);
 
-    let statusMessage = "Booked. Please arrive at your slot time.";
-    if (ahead === 0 && b.status === "BOOKED") statusMessage = "Your turn is approaching";
-    else if (ahead <= 3 && b.status === "BOOKED") statusMessage = "Your turn is approaching";
-    else if (b.status === "ARRIVED") statusMessage = "You have checked in. Please wait to be verified.";
-    else if (b.status === "VERIFIED") statusMessage = "Verified. Please proceed to weighing.";
-    else if (b.status === "WEIGHING" || b.status === "PROCUREMENT_IN_PROGRESS")
-      statusMessage = "Your crop is being processed.";
-    else if (b.status === "PAYMENT_PROCESSING")
-      statusMessage = "Procurement complete. Payment is processing.";
+      let statusMessage = "Booked. Please arrive at your slot time.";
+      if (ahead === 0 && b.status === "BOOKED") statusMessage = "Your turn is approaching";
+      else if (ahead <= 3 && b.status === "BOOKED") statusMessage = "Your turn is approaching";
+      else if (b.status === "ARRIVED") statusMessage = "You have checked in. Please wait to be verified.";
+      else if (b.status === "VERIFIED") statusMessage = "Verified. Please proceed to weighing.";
+      else if (b.status === "WEIGHING" || b.status === "PROCUREMENT_IN_PROGRESS")
+        statusMessage = "Your crop is being processed.";
+      else if (b.status === "PAYMENT_PROCESSING")
+        statusMessage = "Procurement complete. Payment is processing.";
 
-    return {
-      ...b,
-      farmersAhead: ahead,
-      estimatedWaitMins: waitMins,
-      currentlyServing: serving,
-      statusMessage,
-    };
-  });
+      return {
+        ...b,
+        farmersAhead: ahead,
+        estimatedWaitMins: waitMins,
+        currentlyServing: serving,
+        statusMessage,
+      };
+    })
+  );
 
   const activeCount = bookings.length;
   const isMaxReached = activeCount >= MAX_ACTIVE_BOOKINGS;
   const duration = Date.now() - reqStart;
 
-  const dbIdentifier = process.env.DATABASE_PATH ? "custom_env_db" : "default_sqlite_db";
-  console.log(`[FARMER_CURRENT_TRACE] reqId=${requestId} time=${timestamp} db=${dbIdentifier} farmerId=${farmerId} active=${activeCount} duration=${duration}ms`);
+  console.log(`[FARMER_CURRENT_TRACE] reqId=${requestId} time=${timestamp} farmerId=${farmerId} active=${activeCount} duration=${duration}ms`);
 
   const response = NextResponse.json({
     bookings,
@@ -86,4 +87,3 @@ export async function GET(req: Request) {
 
   return response;
 }
-

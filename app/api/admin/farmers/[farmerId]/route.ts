@@ -7,7 +7,7 @@ export async function GET(req: NextRequest, { params }: { params: { farmerId: st
   if (!session || session.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const db = getDb();
 
-  const farmer = db.prepare(`
+  const farmer = await db.prepare(`
     SELECT u.id, u.phone, u.name, u.active, u.created_at as createdAt,
            fp.id as farmerId, fp.district, fp.state, fp.farmer_code as farmerCode, fp.address
     FROM users u
@@ -16,7 +16,7 @@ export async function GET(req: NextRequest, { params }: { params: { farmerId: st
   `).get(params.farmerId);
   if (!farmer) return NextResponse.json({ error: "Farmer not found" }, { status: 404 });
 
-  const bookings = db.prepare(`
+  const bookings = await db.prepare(`
     SELECT b.id, b.token, b.status, b.quantity_quintal as quantityQuintal, b.actual_quantity as actualQuantity,
            b.created_at as createdAt, c.name as centreName, cr.name as cropName,
            s.date, s.start_time as startTime, p.status as paymentStatus, p.amount as paymentAmount

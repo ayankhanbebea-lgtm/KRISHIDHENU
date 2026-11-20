@@ -7,7 +7,7 @@ export async function GET() {
   const session = await getSession();
   if (!session || session.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const db = getDb();
-  const centres = db.prepare(`
+  const centres = await db.prepare(`
     SELECT pc.id, pc.name, pc.code, pc.district, pc.location, pc.daily_capacity as dailyCapacity,
            pc.avg_service_time_mins as avgServiceTimeMins, pc.high_load_threshold as highLoadThreshold,
            pc.open_time as openTime, pc.close_time as closeTime, pc.active, pc.created_at as createdAt,
@@ -29,11 +29,11 @@ export async function POST(req: NextRequest) {
   }
   const db = getDb();
   // Check code uniqueness
-  const existing = db.prepare(`SELECT id FROM procurement_centres WHERE code = ?`).get(body.code);
+  const existing = await db.prepare(`SELECT id FROM procurement_centres WHERE code = ?`).get(body.code);
   if (existing) return NextResponse.json({ error: "Centre code already exists" }, { status: 409 });
 
   const id = newId("ctr_");
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO procurement_centres (id, name, code, district, location, daily_capacity, avg_service_time_mins, high_load_threshold, open_time, close_time, active, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
   `).run(
@@ -46,6 +46,6 @@ export async function POST(req: NextRequest) {
     body.closeTime || "17:00",
     nowIso()
   );
-  recordAudit(session.id, "CREATE_CENTRE", "procurement_centre", id);
+  await recordAudit(session.id, "CREATE_CENTRE", "procurement_centre", id);
   return NextResponse.json({ ok: true, id });
 }

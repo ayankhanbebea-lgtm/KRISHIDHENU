@@ -12,7 +12,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Please login as a farmer to submit bank details." }, { status: 401 });
   }
 
-  const farmerId = getFarmerProfileId(session.id);
+  const farmerId = await getFarmerProfileId(session.id);
   if (!farmerId) {
     return NextResponse.json({ error: "Farmer profile not found." }, { status: 404 });
   }
@@ -35,7 +35,7 @@ export async function POST(req: Request) {
   const db = getDb();
 
   // Find payment and verify farmer ownership
-  const payment = db
+  const payment = (await db
     .prepare(
       `SELECT p.*, b.status as bookingStatus, b.centre_id as bookingCentreId
        FROM payments p
@@ -44,7 +44,7 @@ export async function POST(req: Request) {
        WHERE (p.id = ? OR p.booking_id = ? OR b.id = ?)
          AND (p.farmer_id = ? OR b.farmer_id = ? OR fp.user_id = ?)`
     )
-    .get(paymentId, bookingId, bookingId, farmerId, farmerId, session.id) as any;
+    .get(paymentId, bookingId, bookingId, farmerId, farmerId, session.id)) as any;
 
   if (!payment) {
     return NextResponse.json(
@@ -64,9 +64,7 @@ export async function POST(req: Request) {
   const now = nowIso();
 
   try {
-    db.exec("BEGIN IMMEDIATE");
-
-    db.prepare(
+    await db.prepare(
       `UPDATE payments SET
         account_holder_name = ?,
         bank_name = ?,
@@ -89,12 +87,7 @@ export async function POST(req: Request) {
       now,
       payment.id
     );
-
-    db.exec("COMMIT");
   } catch (err: any) {
-    try {
-      db.exec("ROLLBACK");
-    } catch {}
     console.error("[SubmitBankDetails Error]", err);
     return NextResponse.json({ error: "Failed to save bank details to database." }, { status: 500 });
   }
@@ -107,7 +100,7 @@ export async function POST(req: Request) {
     submittedAt: now,
   });
 
-  recordAudit(session.id, "SUBMIT_BANK_DETAILS", "payment", payment.id);
+  await recordAudit(session.id, "SUBMIT_BANK_DETAILS", "payment", payment.id);
 
   // Broadcast real-time event to Admin and Farmer dashboards
   broadcastRealtimeEvent({

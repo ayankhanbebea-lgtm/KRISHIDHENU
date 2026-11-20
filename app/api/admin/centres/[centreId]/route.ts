@@ -1,13 +1,13 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
-import { getDb, nowIso } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { recordAudit } from "@/lib/services";
 
 export async function PATCH(req: NextRequest, { params }: { params: { centreId: string } }) {
   const session = await getSession();
   if (!session || session.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const db = getDb();
-  const centre = db.prepare(`SELECT id FROM procurement_centres WHERE id = ?`).get(params.centreId);
+  const centre = await db.prepare(`SELECT id FROM procurement_centres WHERE id = ?`).get(params.centreId);
   if (!centre) return NextResponse.json({ error: "Centre not found" }, { status: 404 });
 
   const body = await req.json().catch(() => ({}));
@@ -26,8 +26,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { centreId: 
 
   if (updates.length === 0) return NextResponse.json({ error: "No fields to update" }, { status: 400 });
   vals.push(params.centreId);
-  db.prepare(`UPDATE procurement_centres SET ${updates.join(", ")} WHERE id = ?`).run(...vals);
-  recordAudit(session.id, body.active !== undefined ? (body.active ? "ACTIVATE_CENTRE" : "DEACTIVATE_CENTRE") : "UPDATE_CENTRE", "procurement_centre", params.centreId);
+  await db.prepare(`UPDATE procurement_centres SET ${updates.join(", ")} WHERE id = ?`).run(...vals);
+  await recordAudit(session.id, body.active !== undefined ? (body.active ? "ACTIVATE_CENTRE" : "DEACTIVATE_CENTRE") : "UPDATE_CENTRE", "procurement_centre", params.centreId);
   return NextResponse.json({ ok: true });
 }
 
@@ -35,7 +35,7 @@ export async function GET(req: NextRequest, { params }: { params: { centreId: st
   const session = await getSession();
   if (!session || session.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const db = getDb();
-  const centre = db.prepare(`SELECT * FROM procurement_centres WHERE id = ?`).get(params.centreId);
+  const centre = await db.prepare(`SELECT * FROM procurement_centres WHERE id = ?`).get(params.centreId);
   if (!centre) return NextResponse.json({ error: "Centre not found" }, { status: 404 });
   return NextResponse.json({ centre });
 }

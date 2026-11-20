@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
   const limit = 50;
   const offset = (page - 1) * limit;
   
-  const logs = db.prepare(`
+  const logs = await db.prepare(`
     SELECT a.id, a.action, a.entity, a.entity_id as entityId, a.created_at as createdAt,
            u.name as userName, u.role as userRole, u.phone as userPhone
     FROM audit_logs a JOIN users u ON a.user_id = u.id
@@ -19,7 +19,8 @@ export async function GET(req: NextRequest) {
     LIMIT ? OFFSET ?
   `).all(limit, offset);
   
-  const total = (db.prepare(`SELECT COUNT(*) as c FROM audit_logs`).get() as { c: number }).c;
+  const totalRow = (await db.prepare(`SELECT COUNT(*) as c FROM audit_logs`).get()) as { c: number } | undefined;
+  const total = totalRow?.c ?? 0;
   
   return NextResponse.json({ logs, total, page, limit });
 }

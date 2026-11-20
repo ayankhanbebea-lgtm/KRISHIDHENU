@@ -94,20 +94,7 @@ export default function AdminBookingsPage() {
           `[ADMIN_BOOKINGS_TRACE] time=${timestamp} reqId=${reqId} endpoint=/api/admin/bookings returned=${incomingBookings.length} total=${data.total}`
         );
 
-        setBookings((prevBookings: BookingItem[] | null) => {
-          if (!prevBookings || prevBookings.length === 0) return incomingBookings;
-          if (fd || fc || fs) {
-            return incomingBookings.length > 0 ? incomingBookings : prevBookings;
-          }
-          const map = new Map<string, BookingItem>();
-          for (const b of prevBookings) {
-            if (b?.id) map.set(b.id, b);
-          }
-          for (const b of incomingBookings) {
-            if (b?.id) map.set(b.id, b);
-          }
-          return Array.from(map.values());
-        });
+        setBookings(incomingBookings);
       }
     } finally {
       inFlightRef.current = false;

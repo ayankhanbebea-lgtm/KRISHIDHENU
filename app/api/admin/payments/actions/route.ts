@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
   const { paymentId, action, paymentMethod, transactionId, bankAccountLast4, upiId, paidAt, failureReason, holdReason } = parsed.data;
   const db = getDb();
 
-  const payment = db.prepare(`
+  const payment = (await db.prepare(`
     SELECT
       p.id, p.booking_id as bookingId, p.farmer_id as farmerId, p.farmer_name as farmerName,
       p.procurement_centre_id as centreId, p.crop, p.final_quantity as finalQuantity,
@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
     JOIN farmer_profiles fp ON p.farmer_id = fp.id
     JOIN users u ON fp.user_id = u.id
     WHERE p.id = ?
-  `).get(paymentId) as any;
+  `).get(paymentId)) as any;
 
   if (!payment) {
     return NextResponse.json({ error: "Payment record not found." }, { status: 404 });
@@ -48,9 +48,7 @@ export async function POST(req: NextRequest) {
     }
 
     try {
-      db.exec("BEGIN IMMEDIATE");
-
-      db.prepare(`
+      await db.prepare(`
         UPDATE payments
         SET
           payment_status = 'PROCESSING',
@@ -61,25 +59,22 @@ export async function POST(req: NextRequest) {
         WHERE id = ?
       `).run(nowIso(), nowIso(), nowIso(), paymentId);
 
-      db.prepare(`
+      await db.prepare(`
         UPDATE bookings
         SET status = 'PAYMENT_PROCESSING', updated_at = ?
         WHERE id = ?
       `).run(nowIso(), payment.bookingId);
-
-      db.exec("COMMIT");
-    } catch (e) {
-      try { db.exec("ROLLBACK"); } catch {}
+    } catch {
       return NextResponse.json({ error: "Failed to update payment status." }, { status: 500 });
     }
 
-    sendNotification(
+    await sendNotification(
       payment.farmerUserId,
       "PAYMENT_PROCESSING",
       `Your payment of ${formatCurrency(payment.totalAmount)} for token ${payment.token} is now processing for bank disbursement.`,
       payment.bookingId
     );
-    recordAudit(session.id, "START_PAYMENT_PROCESSING", "payment", paymentId);
+    await recordAudit(session.id, "START_PAYMENT_PROCESSING", "payment", paymentId);
 
     broadcastRealtimeEvent({
       type: "STATUS_CHANGED",
@@ -112,9 +107,7 @@ export async function POST(req: NextRequest) {
     const payTimestamp = paidAt && !isNaN(new Date(paidAt).getTime()) ? new Date(paidAt).toISOString() : nowIso();
 
     try {
-      db.exec("BEGIN IMMEDIATE");
-
-      db.prepare(`
+      await db.prepare(`
         UPDATE payments
         SET
           payment_status = 'PAID',
@@ -140,25 +133,22 @@ export async function POST(req: NextRequest) {
         paymentId
       );
 
-      db.prepare(`
+      await db.prepare(`
         UPDATE bookings
         SET status = 'PAYMENT_COMPLETED', updated_at = ?
         WHERE id = ?
       `).run(nowIso(), payment.bookingId);
-
-      db.exec("COMMIT");
-    } catch (e) {
-      try { db.exec("ROLLBACK"); } catch {}
+    } catch {
       return NextResponse.json({ error: "Failed to mark payment as paid." }, { status: 500 });
     }
 
-    sendNotification(
+    await sendNotification(
       payment.farmerUserId,
       "PAYMENT_COMPLETED",
       `Payment of ${formatCurrency(payment.totalAmount)} for token ${payment.token} has been successfully transferred via ${paymentMethod} (Txn: ${txnRef}).`,
       payment.bookingId
     );
-    recordAudit(session.id, "ADMIN_MARK_PAID", "payment", paymentId);
+    await recordAudit(session.id, "ADMIN_MARK_PAID", "payment", paymentId);
 
     broadcastRealtimeEvent({
       type: "STATUS_CHANGED",
@@ -181,25 +171,22 @@ export async function POST(req: NextRequest) {
 
   if (action === "MARK_FAILED") {
     try {
-      db.exec("BEGIN IMMEDIATE");
-      db.prepare(`
+      await db.prepare(`
         UPDATE payments
         SET payment_status = 'FAILED', status = 'FAILED', failure_reason = ?, updated_at = ?
         WHERE id = ?
       `).run(failureReason || "Bank transfer could not be completed.", nowIso(), paymentId);
-      db.exec("COMMIT");
-    } catch (e) {
-      try { db.exec("ROLLBACK"); } catch {}
+    } catch {
       return NextResponse.json({ error: "Failed to update payment status." }, { status: 500 });
     }
 
-    sendNotification(
+    await sendNotification(
       payment.farmerUserId,
       "PAYMENT_FAILED",
       `Payment processing for token ${payment.token} encountered an issue: ${failureReason || "Verification issue"}. Mandi staff is reviewing.`,
       payment.bookingId
     );
-    recordAudit(session.id, "MARK_PAYMENT_FAILED", "payment", paymentId);
+    await recordAudit(session.id, "MARK_PAYMENT_FAILED", "payment", paymentId);
 
     broadcastRealtimeEvent({
       type: "PAYMENT_UPDATED",
@@ -215,19 +202,16 @@ export async function POST(req: NextRequest) {
 
   if (action === "PUT_ON_HOLD") {
     try {
-      db.exec("BEGIN IMMEDIATE");
-      db.prepare(`
+      await db.prepare(`
         UPDATE payments
         SET payment_status = 'ON_HOLD', hold_reason = ?, updated_at = ?
         WHERE id = ?
       `).run(holdReason || "Under administrative verification.", nowIso(), paymentId);
-      db.exec("COMMIT");
-    } catch (e) {
-      try { db.exec("ROLLBACK"); } catch {}
+    } catch {
       return NextResponse.json({ error: "Failed to put payment on hold." }, { status: 500 });
     }
 
-    recordAudit(session.id, "PUT_PAYMENT_ON_HOLD", "payment", paymentId);
+    await recordAudit(session.id, "PUT_PAYMENT_ON_HOLD", "payment", paymentId);
 
     broadcastRealtimeEvent({
       type: "PAYMENT_UPDATED",
@@ -243,19 +227,16 @@ export async function POST(req: NextRequest) {
 
   if (action === "RESUME_PAYMENT") {
     try {
-      db.exec("BEGIN IMMEDIATE");
-      db.prepare(`
+      await db.prepare(`
         UPDATE payments
         SET payment_status = 'PENDING', status = 'PENDING', hold_reason = NULL, failure_reason = NULL, updated_at = ?
         WHERE id = ?
       `).run(nowIso(), paymentId);
-      db.exec("COMMIT");
-    } catch (e) {
-      try { db.exec("ROLLBACK"); } catch {}
+    } catch {
       return NextResponse.json({ error: "Failed to resume payment." }, { status: 500 });
     }
 
-    recordAudit(session.id, "RESUME_PAYMENT", "payment", paymentId);
+    await recordAudit(session.id, "RESUME_PAYMENT", "payment", paymentId);
 
     broadcastRealtimeEvent({
       type: "PAYMENT_UPDATED",

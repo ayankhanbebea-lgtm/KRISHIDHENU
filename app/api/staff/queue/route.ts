@@ -27,14 +27,13 @@ export async function GET(req: NextRequest) {
   const todayIST = getTodayIST();
 
   const db = getDb();
-  const dbIdentifier = process.env.DATABASE_PATH ? "custom_env_db" : "default_sqlite_db";
 
   let centre = requestedCentreId
-    ? (db.prepare(`SELECT id, name, code FROM procurement_centres WHERE id = ?`).get(requestedCentreId) as any)
+    ? ((await db.prepare(`SELECT id, name, code FROM procurement_centres WHERE id = ?`).get(requestedCentreId)) as any)
     : null;
-  if (!centre) centre = getStaffCentre(session.id);
+  if (!centre) centre = await getStaffCentre(session.id);
   if (!centre) {
-    centre = db.prepare(`SELECT id, name, code FROM procurement_centres ORDER BY code ASC LIMIT 1`).get() as any;
+    centre = (await db.prepare(`SELECT id, name, code FROM procurement_centres ORDER BY code ASC LIMIT 1`).get()) as any;
   }
 
   if (!centre) {
@@ -45,7 +44,7 @@ export async function GET(req: NextRequest) {
   const activeDate = !requestedDate || requestedDate === "undefined" ? todayIST : requestedDate === "all" ? "all" : normalizeDateToYMD(requestedDate);
 
   // Unified Query matching Admin Database Query
-  const allRows = db
+  const allRows = (await db
     .prepare(
       `SELECT b.id, b.token, b.status, b.quantity_quintal as quantityQuintal, b.actual_quantity as actualQuantity,
               b.quality_grade as qualityGrade, b.created_at as createdAt, b.updated_at as updatedAt,
@@ -68,7 +67,7 @@ export async function GET(req: NextRequest) {
        WHERE b.centre_id = ?
        ORDER BY s.date ASC, COALESCE(q.position, 999) ASC, b.created_at ASC`
     )
-    .all(centre.id) as any[];
+    .all(centre.id)) as any[];
 
   // Normalized date comparison
   const filteredRows = activeDate === "all"
@@ -88,7 +87,7 @@ export async function GET(req: NextRequest) {
   };
 
   // Group upcoming active bookings by date
-  const upcomingSummary = db
+  const upcomingSummary = (await db
     .prepare(
       `SELECT s.date, COUNT(b.id) as count
        FROM bookings b
@@ -97,15 +96,15 @@ export async function GET(req: NextRequest) {
        GROUP BY s.date
        ORDER BY s.date ASC`
     )
-    .all(centre.id) as { date: string; count: number }[];
+    .all(centre.id)) as { date: string; count: number }[];
 
-  const allCentres = db.prepare(`SELECT id, name, code FROM procurement_centres ORDER BY code ASC`).all();
+  const allCentres = await db.prepare(`SELECT id, name, code FROM procurement_centres ORDER BY code ASC`).all();
 
-  const serving = currentlyServingToken(centre.id, activeDate === "all" ? todayIST : activeDate);
-  const load = centreLoad(centre.id, activeDate === "all" ? todayIST : activeDate);
+  const serving = await currentlyServingToken(centre.id, activeDate === "all" ? todayIST : activeDate);
+  const load = await centreLoad(centre.id, activeDate === "all" ? todayIST : activeDate);
 
   const respEnd = Date.now();
-  console.log(`[STAFF_QUEUE_TRACE] reqId=${requestId} time=${timestamp} db=${dbIdentifier} centre=${centre.code} date=${activeDate} total=${filteredRows.length} active=${activeTotal} duration=${respEnd - reqStart}ms`);
+  console.log(`[STAFF_QUEUE_TRACE] reqId=${requestId} time=${timestamp} centre=${centre.code} date=${activeDate} total=${filteredRows.length} active=${activeTotal} duration=${respEnd - reqStart}ms`);
 
   const response = NextResponse.json({
     requestId,
@@ -122,7 +121,7 @@ export async function GET(req: NextRequest) {
     serving,
     load,
     debug: {
-      dbIdentifier,
+      dbIdentifier: "turso_cloud",
       executionMs: respEnd - reqStart,
       isCache: false,
     },

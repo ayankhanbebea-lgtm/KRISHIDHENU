@@ -89,37 +89,7 @@ export default function AdminQueuePage() {
 
       if (res.ok) {
         const queueData = await res.json();
-        setData((prevData) => {
-          if (!prevData || isInitial) return queueData;
-          const mergedCentres = (queueData.centres || []).map((incomingCentre: CentreQueueData) => {
-            const prevCentre = prevData.centres?.find((c) => c.id === incomingCentre.id || c.code === incomingCentre.code);
-            if (!prevCentre) return incomingCentre;
-
-            const queueMap = new Map();
-            for (const q of prevCentre.queue || []) {
-              if (q?.id || q?.token) queueMap.set(q.id || q.token, q);
-            }
-            for (const q of incomingCentre.queue || []) {
-              if (q?.id || q?.token) queueMap.set(q.id || q.token, q);
-            }
-            const mergedQueue = Array.from(queueMap.values());
-
-            return {
-              ...incomingCentre,
-              queue: mergedQueue,
-              serving: incomingCentre.serving || prevCentre.serving,
-              load: {
-                ...incomingCentre.load,
-                waiting: Math.max(incomingCentre.load?.waiting || 0, prevCentre.load?.waiting || 0, mergedQueue.length),
-              },
-            };
-          });
-
-          return {
-            ...queueData,
-            centres: mergedCentres.length > 0 ? mergedCentres : prevData.centres,
-          };
-        });
+        setData(queueData);
       }
     } finally {
       inFlightRef.current = false;

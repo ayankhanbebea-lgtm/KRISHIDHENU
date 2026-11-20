@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
   const offset = (page - 1) * limit;
 
   const search = `%${q}%`;
-  const farmers = db.prepare(`
+  const farmers = await db.prepare(`
     SELECT u.id, u.phone, u.name, u.active, u.created_at as createdAt,
            fp.id as farmerId, fp.district, fp.state, fp.farmer_code as farmerCode,
            COUNT(b.id) as totalBookings,
@@ -27,10 +27,11 @@ export async function GET(req: NextRequest) {
     LIMIT ? OFFSET ?
   `).all(search, search, limit, offset);
 
-  const total = (db.prepare(`
+  const totalRow = (await db.prepare(`
     SELECT COUNT(*) as c FROM users u JOIN farmer_profiles fp ON fp.user_id = u.id
     WHERE u.role = 'FARMER' AND (u.name LIKE ? OR u.phone LIKE ?)
-  `).get(search, search) as { c: number }).c;
+  `).get(search, search)) as { c: number } | undefined;
+  const total = totalRow?.c ?? 0;
 
   return NextResponse.json({ farmers, total, page, limit });
 }

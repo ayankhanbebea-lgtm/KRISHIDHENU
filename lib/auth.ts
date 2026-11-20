@@ -46,7 +46,7 @@ export async function createSession(user: SessionUser): Promise<string> {
     .sign(secretKey());
 
   // Store the session in the database
-  db.prepare(
+  await db.prepare(
     `INSERT INTO sessions (id, user_id, token, expires_at, created_at, last_active_at)
      VALUES (?, ?, ?, ?, ?, ?)`
   ).run(sessionId, user.id, token, expiresAt, createdAt, createdAt);
@@ -76,7 +76,7 @@ export async function validateSession(token: string): Promise<SessionUser | null
     if (!sid && !userId && !phone) return null;
 
     const db = getDb();
-    const row = db
+    const row = await db
       .prepare(
         `SELECT s.id as session_id, s.expires_at, u.id, u.name, u.phone, u.role
          FROM sessions s
@@ -96,7 +96,7 @@ export async function validateSession(token: string): Promise<SessionUser | null
 
     if (!row) {
       if (userId || phone) {
-        let userRow = db
+        let userRow = await db
           .prepare(`SELECT id, name, phone, role, active FROM users WHERE id = ? OR phone = ?`)
           .get(userId || "", phone || "") as
           | { id: string; name: string; phone: string; role: "FARMER" | "STAFF" | "ADMIN"; active: number }
@@ -109,7 +109,7 @@ export async function validateSession(token: string): Promise<SessionUser | null
           const validName = (payload.name as string) || (validRole === "ADMIN" ? "Administrator" : validRole === "STAFF" ? "Mandi Staff" : "Farmer");
           const uid = userId || newId("usr_");
           try {
-            db.prepare(
+            await db.prepare(
               `INSERT OR IGNORE INTO users (id, phone, role, name, language, created_at, updated_at, active)
                VALUES (?, ?, ?, ?, 'en', ?, ?, 1)`
             ).run(uid, phone, validRole, validName, nowIso(), nowIso());
@@ -117,7 +117,7 @@ export async function validateSession(token: string): Promise<SessionUser | null
             if (validRole === "FARMER") {
               const fpId = newId("frm_");
               const farmerCode = `FP-${phone.slice(-4)}`;
-              db.prepare(
+              await db.prepare(
                 `INSERT OR IGNORE INTO farmer_profiles (id, user_id, address, district, state, farmer_code, language, created_at, updated_at)
                  VALUES (?, ?, 'Registered Farmer', 'Jaipur', 'Rajasthan', ?, 'en', ?, ?)`
               ).run(fpId, uid, farmerCode, nowIso(), nowIso());
@@ -138,7 +138,7 @@ export async function validateSession(token: string): Promise<SessionUser | null
         if (userRow && userRow.active === 1) {
           const exp = new Date(Date.now() + SESSION_MAX_AGE_SECONDS * 1000).toISOString();
           try {
-            db.prepare(
+            await db.prepare(
               `INSERT OR REPLACE INTO sessions (id, user_id, token, expires_at, created_at, last_active_at)
                VALUES (?, ?, ?, ?, ?, ?)`
             ).run(sid || newId("sess_"), userRow.id, token, exp, nowIso(), nowIso());
@@ -157,12 +157,12 @@ export async function validateSession(token: string): Promise<SessionUser | null
 
     // Check if session has expired in database
     if (new Date(row.expires_at).getTime() <= Date.now()) {
-      db.prepare(`DELETE FROM sessions WHERE id = ?`).run(row.session_id);
+      await db.prepare(`DELETE FROM sessions WHERE id = ?`).run(row.session_id);
       return null;
     }
 
     // Update last_active_at
-    db.prepare(`UPDATE sessions SET last_active_at = ? WHERE id = ?`).run(nowIso(), row.session_id);
+    await db.prepare(`UPDATE sessions SET last_active_at = ? WHERE id = ?`).run(nowIso(), row.session_id);
 
     return {
       id: row.id,
@@ -244,9 +244,9 @@ export async function revokeSession(tokenOrSid?: string) {
       }
 
       if (sid) {
-        db.prepare(`DELETE FROM sessions WHERE id = ? OR token = ?`).run(sid, token);
+        await db.prepare(`DELETE FROM sessions WHERE id = ? OR token = ?`).run(sid, token);
       } else {
-        db.prepare(`DELETE FROM sessions WHERE id = ? OR token = ?`).run(token, token);
+        await db.prepare(`DELETE FROM sessions WHERE id = ? OR token = ?`).run(token, token);
       }
     } catch (e) {
       console.error("Failed to revoke session from database:", e);

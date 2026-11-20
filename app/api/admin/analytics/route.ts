@@ -8,7 +8,7 @@ export async function GET(req: NextRequest) {
   const db = getDb();
   
   // Daily bookings for the last 30 days
-  const dailyBookings = db.prepare(`
+  const dailyBookings = await db.prepare(`
     SELECT s.date, COUNT(*) as count,
            SUM(CASE WHEN b.status IN ('PROCUREMENT_COMPLETED','PAYMENT_PROCESSING','PAYMENT_COMPLETED') THEN 1 ELSE 0 END) as completed,
            SUM(CASE WHEN b.status = 'CANCELLED' THEN 1 ELSE 0 END) as cancelled
@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
   `).all();
   
   // Centre utilization
-  const centreStats = db.prepare(`
+  const centreStats = await db.prepare(`
     SELECT pc.name, pc.code, COUNT(b.id) as totalBookings,
            SUM(CASE WHEN b.status IN ('PROCUREMENT_COMPLETED','PAYMENT_PROCESSING','PAYMENT_COMPLETED') THEN 1 ELSE 0 END) as completed,
            pc.daily_capacity as capacity
@@ -28,18 +28,18 @@ export async function GET(req: NextRequest) {
   `).all();
   
   // Payment summary
-  const paymentSummary = db.prepare(`
+  const paymentSummary = await db.prepare(`
     SELECT status, COUNT(*) as count, COALESCE(SUM(amount), 0) as totalAmount
     FROM payments GROUP BY status
   `).all();
   
   // Status breakdown
-  const statusBreakdown = db.prepare(`
+  const statusBreakdown = await db.prepare(`
     SELECT status, COUNT(*) as count FROM bookings GROUP BY status ORDER BY count DESC
   `).all();
   
   // Average service time (from completed bookings with actual_quantity)
-  const avgServiceStats = db.prepare(`
+  const avgServiceStats = await db.prepare(`
     SELECT pc.name, pc.avg_service_time_mins as avgServiceTimeMins,
            COUNT(b.id) as completedCount
     FROM procurement_centres pc
@@ -48,10 +48,10 @@ export async function GET(req: NextRequest) {
     GROUP BY pc.id
   `).all();
   
-  const totalRevenue = db.prepare(`SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE status = 'PAID'`).get() as any;
-  const totalFarmers = db.prepare(`SELECT COUNT(*) as c FROM users WHERE role = 'FARMER'`).get() as any;
-  const totalBookings = db.prepare(`SELECT COUNT(*) as c FROM bookings`).get() as any;
-  const completedBookings = db.prepare(`SELECT COUNT(*) as c FROM bookings WHERE status IN ('PROCUREMENT_COMPLETED','PAYMENT_PROCESSING','PAYMENT_COMPLETED')`).get() as any;
+  const totalRevenue = ((await db.prepare(`SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE status = 'PAID'`).get()) as any) || { total: 0 };
+  const totalFarmers = ((await db.prepare(`SELECT COUNT(*) as c FROM users WHERE role = 'FARMER'`).get()) as any) || { c: 0 };
+  const totalBookings = ((await db.prepare(`SELECT COUNT(*) as c FROM bookings`).get()) as any) || { c: 0 };
+  const completedBookings = ((await db.prepare(`SELECT COUNT(*) as c FROM bookings WHERE status IN ('PROCUREMENT_COMPLETED','PAYMENT_PROCESSING','PAYMENT_COMPLETED')`).get()) as any) || { c: 0 };
   
   return NextResponse.json({
     dailyBookings,

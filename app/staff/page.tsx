@@ -117,50 +117,10 @@ export default function StaffDashboard() {
           return;
         }
 
-        setData((prevData: any) => {
-          const timestamp = new Date().toISOString();
-          const prevRows = prevData?.rows || [];
-          const incomingRows = d?.rows || [];
-
-          console.log(
-            `[STAFF_UI_TRACE] time=${timestamp} reqId=${reqId} endpoint=/api/staff/queue status=${res.status} returned=${incomingRows.length} prev=${prevRows.length} isInitial=${isInitial}`
-          );
-
-          if (!prevData) {
-            return d;
-          }
-
-          // Merge rows by unique booking ID to eliminate container flicker
-          const rowMap = new Map();
-          for (const r of prevRows) {
-            if (r?.id) rowMap.set(r.id, r);
-          }
-          for (const r of incomingRows) {
-            if (r?.id) rowMap.set(r.id, r);
-          }
-          const mergedRows = Array.from(rowMap.values());
-
-          // Recompute accurate summary counters from verified merged bookings
-          const summary = {
-            total: mergedRows.length,
-            waiting: mergedRows.filter((r) => r.status === "BOOKED").length,
-            inProgress: mergedRows.filter((r) => ["ARRIVED", "VERIFIED", "WEIGHING", "PROCUREMENT_IN_PROGRESS"].includes(r.status)).length,
-            completed: mergedRows.filter((r) => ["PROCUREMENT_COMPLETED", "PAYMENT_PROCESSING", "PAYMENT_COMPLETED"].includes(r.status)).length,
-            paymentPending: mergedRows.filter((r) => r.paymentStatus && r.paymentStatus !== "PAID").length,
-          };
-
-          return {
-            ...d,
-            centre: d.centre || prevData.centre,
-            rows: mergedRows,
-            summary,
-            totalCentreBookings: Math.max(d.totalCentreBookings || 0, prevData.totalCentreBookings || 0, mergedRows.length),
-            activeTotal: Math.max(d.activeTotal || 0, prevData.activeTotal || 0, summary.waiting + summary.inProgress),
-            serving: d.serving !== undefined && d.serving !== null ? d.serving : prevData.serving,
-            load: d.load || prevData.load,
-            allCentres: d.allCentres?.length ? d.allCentres : prevData.allCentres,
-          };
-        });
+        console.log(
+          `[STAFF_UI_TRACE] time=${new Date().toISOString()} reqId=${reqId} endpoint=/api/staff/queue status=${res.status} returned=${d?.rows?.length ?? 0} total=${d?.totalCentreBookings}`
+        );
+        setData(d);
 
         // Populate initial date and centre selection without triggering effect recreation
         if (!selectedDateRef.current && d.date && d.date !== "all") {

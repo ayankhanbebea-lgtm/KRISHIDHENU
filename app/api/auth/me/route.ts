@@ -10,7 +10,7 @@ export async function GET() {
   let language = "en";
   try {
     const db = getDb();
-    const row = db.prepare(`SELECT language FROM users WHERE id = ?`).get(session.id) as
+    const row = (await db.prepare(`SELECT language FROM users WHERE id = ?`).get(session.id)) as
       | { language: string }
       | undefined;
     if (row?.language) language = row.language;

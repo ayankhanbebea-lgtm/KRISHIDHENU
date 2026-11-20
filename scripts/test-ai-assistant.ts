@@ -31,7 +31,7 @@ async function runTestSuite() {
 
   // 2. Setup Farmer Session
   const db = getDb();
-  const user = db.prepare("SELECT u.id, u.name, u.phone, u.role FROM users u WHERE u.role = 'FARMER' LIMIT 1").get() as any;
+  const user = (await db.prepare("SELECT u.id, u.name, u.phone, u.role FROM users u WHERE u.role = 'FARMER' LIMIT 1").get()) as any;
 
   if (!user) {
     throw new Error("No farmer user found in database for testing.");

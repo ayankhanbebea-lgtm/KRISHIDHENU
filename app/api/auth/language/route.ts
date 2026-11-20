@@ -15,7 +15,7 @@ export async function PATCH(req: NextRequest) {
   }
 
   const db = getDb();
-  db.prepare(`UPDATE users SET language = ?, updated_at = ? WHERE id = ?`).run(lang, nowIso(), session.id);
+  await db.prepare(`UPDATE users SET language = ?, updated_at = ? WHERE id = ?`).run(lang, nowIso(), session.id);
 
   return NextResponse.json({ ok: true, language: lang });
 }

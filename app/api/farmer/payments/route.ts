@@ -9,7 +9,7 @@ export async function GET() {
     return NextResponse.json({ error: "Please login as a farmer." }, { status: 401 });
   }
 
-  const farmerId = getFarmerProfileId(session.id);
+  const farmerId = await getFarmerProfileId(session.id);
   if (!farmerId) {
     return NextResponse.json({ payments: [], stats: { totalDisbursed: 0, pendingAmount: 0, count: 0 } });
   }
@@ -73,7 +73,7 @@ export async function GET() {
     ORDER BY COALESCE(p.created_at, b.updated_at, b.created_at) DESC
   `;
 
-  const rows = db.prepare(query).all(farmerId, session.id, farmerId) as any[];
+  const rows = (await db.prepare(query).all(farmerId, session.id, farmerId)) as any[];
 
   console.log("[FarmerPayments API]", {
     loggedInFarmerId: farmerId,
@@ -99,7 +99,7 @@ export async function GET() {
     if (!paymentId) {
       paymentId = newId("pay_");
       try {
-        db.prepare(`
+        await db.prepare(`
           INSERT INTO payments (
             id, booking_id, token_number, farmer_id, farmer_name, procurement_centre_id,
             crop, final_quantity, quantity_unit, rate_per_unit, deductions, final_payable_amount,

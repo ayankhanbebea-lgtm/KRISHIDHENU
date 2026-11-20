@@ -99,7 +99,7 @@ export async function GET(req: NextRequest) {
     LIMIT ? OFFSET ?
   `;
 
-  const rows = db.prepare(query).all(...vals, limit, offset) as any[];
+  const rows = (await db.prepare(query).all(...vals, limit, offset)) as any[];
 
   const countQuery = `
     SELECT COUNT(p.id) as total
@@ -110,10 +110,9 @@ export async function GET(req: NextRequest) {
     JOIN slots s ON b.slot_id = s.id
     ${whereClause}
   `;
-  const totalCount = (db.prepare(countQuery).get(...vals) as any)?.total || 0;
+  const totalCount = ((await db.prepare(countQuery).get(...vals)) as any)?.total || 0;
 
-  // Stats across all payments
-  const stats = db.prepare(`
+  const stats = ((await db.prepare(`
     SELECT
       COUNT(id) as totalRecords,
       COALESCE(SUM(CASE WHEN payment_status = 'PAID' OR status = 'PAID' THEN COALESCE(final_payable_amount, total_amount, amount, 0) ELSE 0 END), 0) as totalDisbursed,
@@ -126,9 +125,9 @@ export async function GET(req: NextRequest) {
       COUNT(CASE WHEN payment_status = 'FAILED' OR (payment_status IS NULL AND status = 'FAILED') THEN 1 END) as failedCount,
       COUNT(CASE WHEN payment_status = 'ON_HOLD' THEN 1 END) as onHoldCount
     FROM payments
-  `).get() as any;
+  `).get()) as any) || {};
 
-  const centres = db.prepare(`SELECT id, name, code, district FROM procurement_centres ORDER BY name`).all();
+  const centres = await db.prepare(`SELECT id, name, code, district FROM procurement_centres ORDER BY name`).all();
 
   return NextResponse.json({
     payments: rows,

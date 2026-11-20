@@ -5,7 +5,6 @@ import { getStaffCentre } from "@/lib/staff";
 import { sendNotification, recordAudit } from "@/lib/services";
 import { staffActionSchema } from "@/lib/validation";
 import { broadcastRealtimeEvent } from "@/lib/realtime";
-
 import { getTodayIST, normalizeDateToYMD } from "@/lib/format";
 
 // Complete, robust state machine matching real mandi procurement workflow
@@ -43,11 +42,11 @@ export async function POST(req: NextRequest) {
   const db = getDb();
 
   let centre = body?.centreId
-    ? (db.prepare(`SELECT id, name, code FROM procurement_centres WHERE id = ?`).get(body.centreId) as any)
+    ? ((await db.prepare(`SELECT id, name, code FROM procurement_centres WHERE id = ?`).get(body.centreId)) as any)
     : null;
-  if (!centre) centre = getStaffCentre(session.id);
+  if (!centre) centre = await getStaffCentre(session.id);
   if (!centre) {
-    centre = db.prepare(`SELECT id, name, code FROM procurement_centres ORDER BY code ASC LIMIT 1`).get() as any;
+    centre = (await db.prepare(`SELECT id, name, code FROM procurement_centres ORDER BY code ASC LIMIT 1`).get()) as any;
   }
   if (!centre) return NextResponse.json({ error: "No centre assigned to this staff account." }, { status: 404 });
 
@@ -55,7 +54,7 @@ export async function POST(req: NextRequest) {
     const targetDate = body?.date && body.date !== "all" ? normalizeDateToYMD(body.date) : null;
 
     // Single source of truth query: Select first eligible waiting farmer
-    let next = db
+    let next = (await db
       .prepare(
         `SELECT b.id as bookingId, b.token, q.id as queueId, s.date as slotDate
          FROM bookings b
@@ -73,11 +72,11 @@ export async function POST(req: NextRequest) {
            b.created_at ASC
          LIMIT 1`
       )
-      .get(centre.id) as { queueId?: string; bookingId: string; token: string; slotDate: string } | undefined;
+      .get(centre.id)) as { queueId?: string; bookingId: string; token: string; slotDate: string } | undefined;
 
     // Fallback: If date filter was applied and was empty, search all upcoming active bookings at this centre
     if (!next && targetDate) {
-      next = db
+      next = (await db
         .prepare(
           `SELECT b.id as bookingId, b.token, q.id as queueId, s.date as slotDate
            FROM bookings b
@@ -94,7 +93,7 @@ export async function POST(req: NextRequest) {
              b.created_at ASC
            LIMIT 1`
         )
-        .get(centre.id) as { queueId?: string; bookingId: string; token: string; slotDate: string } | undefined;
+        .get(centre.id)) as { queueId?: string; bookingId: string; token: string; slotDate: string } | undefined;
     }
 
     if (!next) {
@@ -103,23 +102,23 @@ export async function POST(req: NextRequest) {
 
     const calledTimestamp = nowIso();
     if (next.queueId) {
-      db.prepare(`UPDATE queue_entries SET called_at = ? WHERE id = ?`).run(calledTimestamp, next.queueId);
+      await db.prepare(`UPDATE queue_entries SET called_at = ? WHERE id = ?`).run(calledTimestamp, next.queueId);
     } else {
       const newQueueId = newId("q_");
-      db.prepare(`INSERT INTO queue_entries (id, booking_id, centre_id, date, position, called_at, created_at) VALUES (?, ?, ?, ?, 1, ?, ?)`)
+      await db.prepare(`INSERT INTO queue_entries (id, booking_id, centre_id, date, position, called_at, created_at) VALUES (?, ?, ?, ?, 1, ?, ?)`)
         .run(newQueueId, next.bookingId, centre.id, next.slotDate, calledTimestamp, calledTimestamp);
     }
 
-    const farmerUser = db
+    const farmerUser = (await db
       .prepare(
         `SELECT u.id FROM bookings b JOIN farmer_profiles fp ON b.farmer_id = fp.id JOIN users u ON fp.user_id = u.id WHERE b.id = ?`
       )
-      .get(next.bookingId) as { id: string } | undefined;
+      .get(next.bookingId)) as { id: string } | undefined;
 
     if (farmerUser) {
-      sendNotification(farmerUser.id, "QUEUE_APPROACHING", `Your token ${next.token} is approaching. Please reach the procurement centre.`, next.bookingId);
+      await sendNotification(farmerUser.id, "QUEUE_APPROACHING", `Your token ${next.token} is approaching. Please reach the procurement centre.`, next.bookingId);
     }
-    recordAudit(session.id, "CALL_NEXT", "booking", next.bookingId);
+    await recordAudit(session.id, "CALL_NEXT", "booking", next.bookingId);
 
     broadcastRealtimeEvent({
       type: "CALL_NEXT",
@@ -136,11 +135,11 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.errors[0]?.message || "Invalid request" }, { status: 400 });
   }
-  const { bookingId, action, actualQuantity, qualityGrade, remarks, amount } = parsed.data;
+  const { bookingId, action, actualQuantity, qualityGrade, remarks } = parsed.data;
 
-  const booking = db
+  const booking = (await db
     .prepare(`SELECT id, status, centre_id as centreId, farmer_id as farmerId, token FROM bookings WHERE id = ?`)
-    .get(bookingId) as { id: string; status: string; centreId: string; farmerId: string; token: string } | undefined;
+    .get(bookingId)) as { id: string; status: string; centreId: string; farmerId: string; token: string } | undefined;
 
   if (!booking) return NextResponse.json({ error: "Booking not found." }, { status: 404 });
   if (booking.centreId !== centre.id) {
@@ -155,7 +154,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const fullBooking = db
+  const fullBooking = (await db
     .prepare(
       `SELECT b.id, b.crop_id, b.farmer_id, b.centre_id, b.token,
               c.name as cropName, COALESCE(c.msp_rate, 2275) as cropMsp,
@@ -166,20 +165,18 @@ export async function POST(req: NextRequest) {
        JOIN users u ON fp.user_id = u.id
        WHERE b.id = ?`
     )
-    .get(bookingId) as any;
+    .get(bookingId)) as any;
 
   const newStatus = RESULT_STATUS[action] || action;
 
   try {
-    db.exec("BEGIN IMMEDIATE");
-
     if (action === "COMPLETE_PROCUREMENT") {
       const finalQuantity = actualQuantity ?? 0;
       const rate = parsed.data.ratePerUnit && parsed.data.ratePerUnit > 0 ? parsed.data.ratePerUnit : (fullBooking?.cropMsp || 2275);
       const deductions = parsed.data.deductions && parsed.data.deductions > 0 ? parsed.data.deductions : 0;
       const finalPayableAmount = Math.max(0, Math.round(((finalQuantity * rate) - deductions) * 100) / 100);
 
-      db.prepare(`UPDATE bookings SET status = ?, actual_quantity = ?, deductions = ?, quality_grade = ?, remarks = ?, updated_at = ? WHERE id = ?`).run(
+      await db.prepare(`UPDATE bookings SET status = ?, actual_quantity = ?, deductions = ?, quality_grade = ?, remarks = ?, updated_at = ? WHERE id = ?`).run(
         newStatus,
         finalQuantity,
         deductions,
@@ -190,10 +187,10 @@ export async function POST(req: NextRequest) {
       );
 
       // Ensure exactly ONE payment record exists, with status BANK_DETAILS_REQUIRED
-      const existingPayment = db.prepare(`SELECT id FROM payments WHERE booking_id = ?`).get(bookingId) as any;
+      const existingPayment = (await db.prepare(`SELECT id FROM payments WHERE booking_id = ?`).get(bookingId)) as any;
       if (!existingPayment) {
         const payId = newId("pay_");
-        db.prepare(
+        await db.prepare(
           `INSERT INTO payments (
             id, booking_id, token_number, farmer_id, farmer_name, procurement_centre_id,
             crop, final_quantity, quantity_unit, rate_per_unit, deductions, final_payable_amount, total_amount,
@@ -217,7 +214,7 @@ export async function POST(req: NextRequest) {
           nowIso()
         );
       } else {
-        db.prepare(
+        await db.prepare(
           `UPDATE payments SET
             token_number = COALESCE(?, token_number),
             farmer_name = COALESCE(?, farmer_name),
@@ -247,18 +244,13 @@ export async function POST(req: NextRequest) {
       }
     } else if (action === "SKIP") {
       const today = getTodayIST();
-      const maxPos = ((db.prepare(`SELECT MAX(position) as m FROM queue_entries WHERE centre_id = ? AND date = ?`).get(booking.centreId, today) as any)?.m || 10);
-      db.prepare(`UPDATE queue_entries SET position = ?, called_at = NULL WHERE booking_id = ?`).run(maxPos + 1, bookingId);
-      db.prepare(`UPDATE bookings SET status = ?, updated_at = ? WHERE id = ?`).run(newStatus, nowIso(), bookingId);
+      const maxPos = (((await db.prepare(`SELECT MAX(position) as m FROM queue_entries WHERE centre_id = ? AND date = ?`).get(booking.centreId, today)) as any)?.m || 10);
+      await db.prepare(`UPDATE queue_entries SET position = ?, called_at = NULL WHERE booking_id = ?`).run(maxPos + 1, bookingId);
+      await db.prepare(`UPDATE bookings SET status = ?, updated_at = ? WHERE id = ?`).run(newStatus, nowIso(), bookingId);
     } else {
-      db.prepare(`UPDATE bookings SET status = ?, updated_at = ? WHERE id = ?`).run(newStatus, nowIso(), bookingId);
+      await db.prepare(`UPDATE bookings SET status = ?, updated_at = ? WHERE id = ?`).run(newStatus, nowIso(), bookingId);
     }
-
-    db.exec("COMMIT");
   } catch (e: any) {
-    try {
-      db.exec("ROLLBACK");
-    } catch {}
     console.error("Queue update failed:", {
       action,
       bookingId,
@@ -274,9 +266,9 @@ export async function POST(req: NextRequest) {
     MARK_NO_SHOW: "You were marked as a no-show for your booked slot.",
   };
   if (fullBooking?.farmerUserId && NOTIF_MESSAGE[action]) {
-    sendNotification(fullBooking.farmerUserId, action, NOTIF_MESSAGE[action], bookingId);
+    await sendNotification(fullBooking.farmerUserId, action, NOTIF_MESSAGE[action], bookingId);
   }
-  recordAudit(session.id, action, "booking", bookingId);
+  await recordAudit(session.id, action, "booking", bookingId);
 
   // Broadcast real-time SSE event to all connected dashboards
   broadcastRealtimeEvent({

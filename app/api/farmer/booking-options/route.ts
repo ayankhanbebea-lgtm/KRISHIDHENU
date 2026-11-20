@@ -17,10 +17,10 @@ export async function GET(req: NextRequest) {
   const todayStr = getTodayIST();
   const date = normalizeDateToYMD(selectedDate || todayStr);
 
-  ensureSlotsForDate(date);
+  await ensureSlotsForDate(date);
 
   const db = getDb();
-  const crops = db.prepare(`SELECT id, name, code FROM crops ORDER BY name`).all();
+  const crops = await db.prepare(`SELECT id, name, code FROM crops ORDER BY name`).all();
 
   // Generate 14-day booking window strictly aligned with IST calendar
   const validDates = [];
@@ -37,7 +37,7 @@ export async function GET(req: NextRequest) {
     const m = String(d.getMonth() + 1).padStart(2, "0");
     const dt = String(d.getDate()).padStart(2, "0");
     const dStr = `${y}-${m}-${dt}`;
-    ensureSlotsForDate(dStr);
+    await ensureSlotsForDate(dStr);
 
     validDates.push({
       date: dStr,
@@ -51,12 +51,12 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  const centres = rankCentres(date);
+  const centres = await rankCentres(date);
   const recommended = centres[0] || null;
 
   let slots: any[] = [];
   if (centreId) {
-    slots = getSlotAvailability(centreId, date);
+    slots = await getSlotAvailability(centreId, date);
   }
 
   return NextResponse.json({
@@ -69,4 +69,3 @@ export async function GET(req: NextRequest) {
     recommended,
   });
 }
-

@@ -8,11 +8,11 @@ export async function GET() {
   if (!session || session.role !== "FARMER") {
     return NextResponse.json({ error: "Please login as a farmer." }, { status: 401 });
   }
-  const farmerId = getFarmerProfileId(session.id);
+  const farmerId = await getFarmerProfileId(session.id);
   if (!farmerId) return NextResponse.json({ bookings: [] });
 
   const db = getDb();
-  const bookings = db
+  const bookings = await db
     .prepare(
       `SELECT b.id, b.token, b.status, b.quantity_quintal as quantityQuintal, b.actual_quantity as actualQuantity,
               b.deductions as bookingDeductions, b.quality_grade as qualityGrade, b.created_at as createdAt,
@@ -56,4 +56,3 @@ export async function GET() {
 
   return NextResponse.json({ bookings });
 }
-

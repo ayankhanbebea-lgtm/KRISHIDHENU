@@ -10,9 +10,9 @@ export async function GET(req: Request) {
   }
 
   const db = getDb();
-  const overview = adminOverview();
+  const overview = await adminOverview();
 
-  const recentAudit = db
+  const recentAudit = await db
     .prepare(
       `SELECT a.action, a.entity, a.entity_id as entityId, a.created_at as createdAt, u.name as userName, u.role as userRole
        FROM audit_logs a JOIN users u ON a.user_id = u.id
@@ -20,11 +20,11 @@ export async function GET(req: Request) {
     )
     .all();
 
-  const paymentBreakdown = db
+  const paymentBreakdown = await db
     .prepare(`SELECT status, COUNT(*) as count FROM payments GROUP BY status`)
     .all();
 
-  const dailyBookings = db
+  const dailyBookings = await db
     .prepare(
       `SELECT s.date as date, COUNT(*) as count FROM bookings b JOIN slots s ON b.slot_id = s.id GROUP BY s.date ORDER BY s.date`
     )

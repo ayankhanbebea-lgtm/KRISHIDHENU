@@ -8,7 +8,7 @@ export async function POST(req: NextRequest) {
   if (!session || session.role !== "FARMER") {
     return NextResponse.json({ error: "Please login as a farmer." }, { status: 401 });
   }
-  const farmerId = getFarmerProfileId(session.id);
+  const farmerId = await getFarmerProfileId(session.id);
   if (!farmerId) {
     return NextResponse.json({ error: "Farmer profile not found." }, { status: 404 });
   }
@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Booking ID is required." }, { status: 400 });
   }
 
-  const result = cancelBooking(bookingId, farmerId, session.id);
+  const result = await cancelBooking(bookingId, farmerId, session.id);
   if (!result.ok) {
     return NextResponse.json({ error: result.error || "Unable to cancel booking." }, { status: 400 });
   }

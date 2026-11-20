@@ -10,6 +10,8 @@
     "lint": "next lint",
     "seed": "tsx prisma/seed.ts",
     "db:push": "prisma db push",
+    "db:backup": "node scripts/backup-db.cjs",
+    "turso:migrate": "tsx scripts/migrate-to-turso.ts",
     "test:regression": "tsx scripts/regression-test.ts",
     "test:consistency": "tsx scripts/test-booking-consistency.ts",
     "test:ai": "tsx scripts/test-ai-assistant.ts",
@@ -20,6 +22,7 @@
   },
   "dependencies": {
     "@hookform/resolvers": "3.9.0",
+    "@libsql/client": "^0.18.0",
     "bcryptjs": "2.4.3",
     "clsx": "2.1.1",
     "jose": "5.9.6",

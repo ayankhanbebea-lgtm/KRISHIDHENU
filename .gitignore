@@ -5,6 +5,7 @@ prisma/dev.db*
 *.db-journal
 *.db-wal
 *.db-shm
+prisma/backup-*
 .env
 .env*.local
 *.log
