@@ -88,8 +88,14 @@ async function testLiveVercel() {
   }
   console.log(`   ✅ Farmer authenticated -> Role: ${farmerVerifyData.user.role}, Name: ${farmerVerifyData.user.name}`);
 
-  // Test 5: AI Assistant Query
+  // Test 5: AI Assistant API Status & English Default
   console.log("\n5. Testing AI Assistant API (/api/farmer/assistant)...");
+  const assistantGetRes = await fetch(`${baseUrl}/api/farmer/assistant`, {
+    headers: { Cookie: farmerCookie },
+  });
+  const assistantGetData = await assistantGetRes.json();
+  console.log(`   ✅ Assistant Status Check -> Status: ${assistantGetData.status}, Model: ${assistantGetData.model}, DefaultLang: ${assistantGetData.defaultLanguage}`);
+
   const assistantRes = await fetch(`${baseUrl}/api/farmer/assistant`, {
     method: "POST",
     headers: {
@@ -102,7 +108,7 @@ async function testLiveVercel() {
   if (assistantRes.status !== 200 || !assistantData.reply) {
     throw new Error(`AI assistant query failed: ${assistantRes.status} ${JSON.stringify(assistantData)}`);
   }
-  console.log(`   ✅ Assistant Reply (Model: ${assistantData.model || "offline-fallback"}):`);
+  console.log(`   ✅ Assistant English Reply (Language: ${assistantData.language || "en"}, Model: ${assistantData.model}, isLive: ${Boolean(assistantData.isLive)}):`);
   console.log(`      "${assistantData.reply.substring(0, 140)}..."`);
 
   // Test 6: Hindi AI Query
@@ -119,8 +125,25 @@ async function testLiveVercel() {
   if (hindiRes.status !== 200 || !hindiData.reply) {
     throw new Error(`Hindi assistant query failed: ${hindiRes.status} ${JSON.stringify(hindiData)}`);
   }
-  console.log(`   ✅ Hindi Reply Preview:`);
+  console.log(`   ✅ Hindi Reply (Language: ${hindiData.language || "hi"}):`);
   console.log(`      "${hindiData.reply.substring(0, 140)}..."`);
+
+  // Test 6b: Hinglish AI Query
+  console.log("\n6b. Testing Hinglish AI Assistant Query...");
+  const hinglishRes = await fetch(`${baseUrl}/api/farmer/assistant`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Cookie: farmerCookie,
+    },
+    body: JSON.stringify({ message: "Mera token status kya hai aur kitna wait karna hoga?" }),
+  });
+  const hinglishData = await hinglishRes.json();
+  if (hinglishRes.status !== 200 || !hinglishData.reply) {
+    throw new Error(`Hinglish assistant query failed: ${hinglishRes.status} ${JSON.stringify(hinglishData)}`);
+  }
+  console.log(`   ✅ Hinglish Reply (Language: ${hinglishData.language || "hinglish"}):`);
+  console.log(`      "${hinglishData.reply.substring(0, 140)}..."`);
 
   // Test 7: Booking Creation (creating application operational data)
   console.log("\n7. Testing Booking Creation on Live Vercel...");
