@@ -42,7 +42,7 @@ export async function GET(req: NextRequest) {
   }
 
   // Filter by date if requested (unless "all")
-  const activeDate = requestedDate === "all" ? "all" : normalizeDateToYMD(requestedDate || todayIST);
+  const activeDate = !requestedDate || requestedDate === "undefined" ? todayIST : requestedDate === "all" ? "all" : normalizeDateToYMD(requestedDate);
 
   // Unified Query matching Admin Database Query
   const allRows = db

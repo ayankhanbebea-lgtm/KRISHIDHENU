@@ -267,7 +267,7 @@ export function getSlotAvailability(centreId: string, rawDate?: string) {
 
   const rawSlots = db
     .prepare(
-      `SELECT id, start_time as startTime, end_time as endTime, capacity
+      `SELECT id, date, start_time as startTime, end_time as endTime, capacity
        FROM slots WHERE centre_id = ? AND date = ? ORDER BY start_time`
     )
     .all(centreId, date) as { id: string; startTime: string; endTime: string; capacity: number }[];
