@@ -4,7 +4,14 @@ import { getDb } from "@/lib/db";
 import { getFarmerProfileId, MAX_ACTIVE_BOOKINGS, ACTIVE_BOOKING_STATUSES } from "@/lib/farmer";
 import { farmersAhead, estimateWaitMinutes, currentlyServingToken } from "@/lib/services";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export async function GET() {
+  const reqStart = Date.now();
+  const requestId = `frm_cur_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const timestamp = new Date().toISOString();
+
   const session = await getSession();
   if (!session || session.role !== "FARMER") {
     return NextResponse.json({ error: "Please login as a farmer." }, { status: 401 });
@@ -58,13 +65,25 @@ export async function GET() {
 
   const activeCount = bookings.length;
   const isMaxReached = activeCount >= MAX_ACTIVE_BOOKINGS;
+  const duration = Date.now() - reqStart;
 
-  return NextResponse.json({
+  const dbIdentifier = process.env.DATABASE_PATH ? "custom_env_db" : "default_sqlite_db";
+  console.log(`[FARMER_CURRENT_TRACE] reqId=${requestId} time=${timestamp} db=${dbIdentifier} farmerId=${farmerId} active=${activeCount} duration=${duration}ms`);
+
+  const response = NextResponse.json({
     bookings,
     activeCount,
     maxLimit: MAX_ACTIVE_BOOKINGS,
     isMaxReached,
     booking: bookings[0] ?? null,
+    requestId,
+    timestamp,
   });
+  response.headers.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
+  response.headers.set("Pragma", "no-cache");
+  response.headers.set("Expires", "0");
+  response.headers.set("X-Request-Id", requestId);
+
+  return response;
 }
 

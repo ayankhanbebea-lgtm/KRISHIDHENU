@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import DashboardShell from "@/components/DashboardShell";
 import { ADMIN_LINKS } from "@/lib/nav";
 import { CardSkeleton } from "@/components/Skeleton";
 import StatusBadge from "@/components/StatusBadge";
 import LoadIndicator from "@/components/LoadIndicator";
+import { getTodayIST } from "@/lib/format";
 import { ListOrdered, Calendar, Phone, RefreshCw } from "lucide-react";
 
 interface QueueEntry {
@@ -39,31 +40,95 @@ export default function AdminQueuePage() {
   const [data, setData] = useState<{ centres: CentreQueueData[]; date: string } | null>(null);
   const [me, setMe] = useState<any>(null);
   const [lang, setLang] = useState("en");
-  const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [selectedDate, setSelectedDate] = useState(() => getTodayIST());
   const [loading, setLoading] = useState(false);
 
-  async function load(d = selectedDate) {
-    setLoading(true);
-    try {
-      const meRes = await fetch("/api/auth/me").then((r) => r.json());
-      setMe(meRes.user);
-      if (meRes.user?.language) setLang(meRes.user.language);
+  const dateRef = useRef<string>(getTodayIST());
+  const latestReqIdRef = useRef<number>(0);
+  const inFlightRef = useRef<boolean>(false);
 
-      const res = await fetch(`/api/admin/queue?date=${d}`);
+  useEffect(() => {
+    dateRef.current = selectedDate;
+  }, [selectedDate]);
+
+  const load = useCallback(async (d?: string, isInitial = false) => {
+    if (isInitial) {
+      setLoading(true);
+    } else if (inFlightRef.current) {
+      return;
+    }
+
+    inFlightRef.current = true;
+    const reqId = ++latestReqIdRef.current;
+    const queryDate = d !== undefined ? d : dateRef.current;
+
+    try {
+      if (isInitial) {
+        try {
+          const meRes = await fetch("/api/auth/me", { cache: "no-store" });
+          if (meRes.ok) {
+            const meData = await meRes.json();
+            setMe(meData.user);
+            if (meData.user?.language) setLang(meData.user.language);
+          }
+        } catch {}
+      }
+
+      const res = await fetch(`/api/admin/queue?date=${encodeURIComponent(queryDate)}&_t=${Date.now()}`, {
+        cache: "no-store",
+        headers: {
+          "Cache-Control": "no-cache",
+          Pragma: "no-cache",
+        },
+      });
+
+      if (reqId < latestReqIdRef.current) {
+        // Drop stale response
+        return;
+      }
+
       if (res.ok) {
         const queueData = await res.json();
         setData(queueData);
       }
     } finally {
-      setLoading(false);
+      inFlightRef.current = false;
+      if (isInitial) setLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
-    load(selectedDate);
-    const interval = setInterval(() => load(selectedDate), 5000);
-    return () => clearInterval(interval);
-  }, [selectedDate]);
+    load(selectedDate, true);
+
+    // Real-time SSE listener
+    let es: EventSource | null = null;
+    try {
+      es = new EventSource("/api/realtime/events");
+      es.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload.type && payload.type !== "CONNECTED") {
+            load(dateRef.current, false);
+          }
+        } catch {}
+      };
+    } catch {}
+
+    const interval = setInterval(() => {
+      load(dateRef.current, false);
+    }, 5000);
+
+    return () => {
+      clearInterval(interval);
+      if (es) es.close();
+    };
+  }, [load, selectedDate]);
+
+  function handleDateChange(newDate: string) {
+    dateRef.current = newDate;
+    setSelectedDate(newDate);
+    load(newDate, false);
+  }
 
   return (
     <DashboardShell
@@ -83,10 +148,10 @@ export default function AdminQueuePage() {
             type="date"
             className="input !py-1.5 text-sm"
             value={selectedDate}
-            onChange={(e) => setSelectedDate(e.target.value)}
+            onChange={(e) => handleDateChange(e.target.value)}
           />
           <button
-            onClick={() => load(selectedDate)}
+            onClick={() => load(dateRef.current, false)}
             className="btn-secondary !p-2"
             title="Refresh Live Data"
           >

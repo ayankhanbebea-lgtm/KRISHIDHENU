@@ -15,6 +15,7 @@ export async function GET(req: NextRequest) {
 
   const stream = new ReadableStream({
     start(controller) {
+      console.log(`[SSE_TRACE] Client connected centreId=${centreId || "all"} farmerId=${farmerId || "all"} time=${new Date().toISOString()}`);
       // Send initial connect message
       controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "CONNECTED" })}\n\n`));
 
@@ -24,6 +25,7 @@ export async function GET(req: NextRequest) {
         if (farmerId && event.farmerId && event.farmerId !== farmerId) return;
 
         try {
+          console.log(`[SSE_TRACE] Delivering event type=${event.type} token=${(event as any).token || "n/a"} to client (centre=${centreId || "all"})`);
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
         } catch {
           // Stream closed
@@ -42,6 +44,7 @@ export async function GET(req: NextRequest) {
       }, 15000);
 
       cleanup = () => {
+        console.log(`[SSE_TRACE] Client disconnected centreId=${centreId || "all"} farmerId=${farmerId || "all"}`);
         clearInterval(heartbeat);
         hub.off("event", listener);
       };

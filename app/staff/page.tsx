@@ -43,31 +43,71 @@ export default function StaffDashboard() {
   const [newBookingNotice, setNewBookingNotice] = useState<{ token: string; date?: string; centreId?: string } | null>(null);
 
   const eventSourceRef = useRef<EventSource | null>(null);
+  const selectedDateRef = useRef<string>("");
+  const selectedCentreIdRef = useRef<string>("");
+  const latestReqIdRef = useRef<number>(0);
+  const inFlightRef = useRef<boolean>(false);
+
+  // Synchronize ref values with active state
+  useEffect(() => {
+    selectedDateRef.current = selectedDate;
+  }, [selectedDate]);
+
+  useEffect(() => {
+    selectedCentreIdRef.current = selectedCentreId;
+  }, [selectedCentreId]);
 
   const load = useCallback(
     async (isInitial = false, dateOverride?: string, centreOverride?: string) => {
-      if (isInitial) setLoading(true);
+      if (isInitial) {
+        setLoading(true);
+      } else if (inFlightRef.current) {
+        // Prevent overlapping background polls from racing or clobbering state
+        return;
+      }
+
+      inFlightRef.current = true;
+      const reqId = ++latestReqIdRef.current;
       const queryStart = Date.now();
+
       try {
-        const meRes = await fetch("/api/auth/me");
-        if (meRes.ok) {
-          const meData = await meRes.json();
-          setMe(meData.user);
-          if (meData.user?.language && !localStorage.getItem("sp_language")) {
-            setLang(meData.user.language);
-          }
+        if (isInitial) {
+          try {
+            const meRes = await fetch("/api/auth/me", { cache: "no-store" });
+            if (meRes.ok) {
+              const meData = await meRes.json();
+              setMe(meData.user);
+              if (meData.user?.language && !localStorage.getItem("sp_language")) {
+                setLang(meData.user.language);
+              }
+            }
+          } catch {}
         }
 
-        const activeDate = dateOverride !== undefined ? dateOverride : selectedDate;
-        const activeCentre = centreOverride !== undefined ? centreOverride : selectedCentreId;
+        const activeDate = dateOverride !== undefined ? dateOverride : selectedDateRef.current;
+        const activeCentre = centreOverride !== undefined ? centreOverride : selectedCentreIdRef.current;
         const params = new URLSearchParams();
         if (activeDate) params.set("date", activeDate);
         if (activeCentre) params.set("centreId", activeCentre);
+        params.set("_t", String(Date.now())); // Strict cache buster
 
-        const targetUrl = `/api/staff/queue${params.toString() ? `?${params.toString()}` : ""}`;
-        const res = await fetch(targetUrl);
+        const targetUrl = `/api/staff/queue?${params.toString()}`;
+        const res = await fetch(targetUrl, {
+          cache: "no-store",
+          headers: {
+            "Cache-Control": "no-cache",
+            Pragma: "no-cache",
+          },
+        });
         const d = await res.json();
         const queryEnd = Date.now();
+
+        // Drop out-of-order or stale response if a newer request already finished or started
+        if (reqId < latestReqIdRef.current) {
+          console.log(`[StaffQueue] Dropping stale response reqId=${reqId} (latest=${latestReqIdRef.current})`);
+          return;
+        }
+
         if (!res.ok) {
           if (res.status === 401) {
             setError("Please login with a Staff account (e.g. 9100000002 for Centre 02).");
@@ -78,34 +118,35 @@ export default function StaffDashboard() {
         }
 
         setData(d);
-        if (!selectedDate && d.date && d.date !== "all") {
+
+        // Populate initial date and centre selection without triggering effect recreation
+        if (!selectedDateRef.current && d.date && d.date !== "all") {
+          selectedDateRef.current = d.date;
           setSelectedDate(d.date);
         }
-        if (!selectedCentreId && d.centre?.id) {
+        if (!selectedCentreIdRef.current && d.centre?.id) {
+          selectedCentreIdRef.current = d.centre.id;
           setSelectedCentreId(d.centre.id);
         }
-        // If today is empty on initial load but upcoming dates have bookings, auto-switch
-        if (isInitial && !selectedDate && d.rows?.length === 0 && d.upcomingSummary?.length > 0) {
-          const firstActiveDate = d.upcomingSummary[0].date;
-          setSelectedDate(firstActiveDate);
-          load(false, firstActiveDate, activeCentre);
-          return;
-        }
+
         setError("");
       } catch (err: any) {
-        console.error("[StaffQueue Error]", err);
-        setError(err.message || "Failed to load queue.");
+        if (reqId === latestReqIdRef.current) {
+          console.error("[StaffQueue Error]", err);
+          setError(err.message || "Failed to load queue.");
+        }
       } finally {
+        inFlightRef.current = false;
         if (isInitial) setLoading(false);
       }
     },
-    [selectedDate, selectedCentreId, setLang]
+    [setLang]
   );
 
   useEffect(() => {
     load(true);
 
-    // Setup Real-time SSE Connection
+    // Setup Real-time SSE Connection ONCE per component lifecycle
     let es: EventSource | null = null;
     try {
       es = new EventSource("/api/realtime/events");
@@ -120,7 +161,8 @@ export default function StaffDashboard() {
                 centreId: payload.centreId,
               });
             }
-            load(false);
+            // Always reload the current active date and centre safely
+            load(false, selectedDateRef.current, selectedCentreIdRef.current);
           }
         } catch {}
       };
@@ -128,19 +170,28 @@ export default function StaffDashboard() {
     } catch {}
 
     const interval = setInterval(() => {
-      load(false);
-    }, 6000);
+      load(false, selectedDateRef.current, selectedCentreIdRef.current);
+    }, 5000);
 
     return () => {
       clearInterval(interval);
-      if (es) es.close();
+      if (es) {
+        es.close();
+        eventSourceRef.current = null;
+      }
     };
   }, [load]);
 
-
   function handleDateChange(newDate: string) {
+    selectedDateRef.current = newDate;
     setSelectedDate(newDate);
-    load(false, newDate);
+    load(false, newDate, selectedCentreIdRef.current);
+  }
+
+  function handleCentreChange(newCentreId: string) {
+    selectedCentreIdRef.current = newCentreId;
+    setSelectedCentreId(newCentreId);
+    load(false, selectedDateRef.current, newCentreId);
   }
 
   async function callNext() {
@@ -152,8 +203,8 @@ export default function StaffDashboard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "CALL_NEXT",
-          date: selectedDate || data?.todayIST,
-          centreId: selectedCentreId || data?.centre?.id,
+          date: selectedDateRef.current || data?.todayIST,
+          centreId: selectedCentreIdRef.current || data?.centre?.id,
         }),
       });
       const d = await res.json();
@@ -161,7 +212,7 @@ export default function StaffDashboard() {
         setError(d.error || "Failed to call next farmer.");
         return;
       }
-      load(false);
+      load(false, selectedDateRef.current, selectedCentreIdRef.current);
     } catch {
       setError("Network error calling next farmer.");
     } finally {
@@ -179,7 +230,7 @@ export default function StaffDashboard() {
         body: JSON.stringify({
           bookingId,
           action,
-          centreId: selectedCentreId || data?.centre?.id,
+          centreId: selectedCentreIdRef.current || data?.centre?.id,
           ...extra,
         }),
       });
@@ -191,7 +242,7 @@ export default function StaffDashboard() {
       setWeighModal(null);
       setNoShowConfirm(null);
       setSkipConfirm(null);
-      load(false);
+      load(false, selectedDateRef.current, selectedCentreIdRef.current);
     } catch {
       setError("Network error performing action.");
     } finally {
@@ -287,10 +338,7 @@ export default function StaffDashboard() {
                 {data?.allCentres && data.allCentres.length > 1 ? (
                   <select
                     value={selectedCentreId || centre.id}
-                    onChange={(e) => {
-                      setSelectedCentreId(e.target.value);
-                      load(false, selectedDate, e.target.value);
-                    }}
+                    onChange={(e) => handleCentreChange(e.target.value)}
                     className="font-display font-bold text-ink text-sm bg-transparent border-b border-brand-600 focus:outline-none cursor-pointer pr-2"
                   >
                     {data.allCentres.map((c: any) => (
@@ -351,7 +399,7 @@ export default function StaffDashboard() {
               />
             </div>
             <button
-              onClick={() => load(false)}
+              onClick={() => load(false, selectedDateRef.current, selectedCentreIdRef.current)}
               className="btn-ghost !py-1.5 !px-2.5 text-xs inline-flex items-center gap-1 text-ink-soft"
               title={t("sync")}
             >

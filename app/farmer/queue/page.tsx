@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, Suspense } from "react";
+import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import FarmerTopBar from "@/components/FarmerTopBar";
 import FarmerNav from "@/components/FarmerNav";
@@ -34,11 +34,15 @@ function QueuePageContent() {
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState("");
+  const selectedIdRef = useRef(selectedId);
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
 
   const load = useCallback(async (isInitial = false) => {
     if (isInitial) setLoading(true);
     try {
-      const res = await fetch("/api/farmer/current");
+      const res = await fetch(`/api/farmer/current?_t=${Date.now()}`, { cache: "no-store" });
       if (!res.ok) {
         setBookings([]);
         setStale(true);
@@ -51,7 +55,7 @@ function QueuePageContent() {
       if (activeList.length > 0) {
         if (paramBookingId && activeList.some((b: any) => b.id === paramBookingId)) {
           setSelectedId(paramBookingId);
-        } else if (!selectedId || !activeList.some((b: any) => b.id === selectedId)) {
+        } else if (!selectedIdRef.current || !activeList.some((b: any) => b.id === selectedIdRef.current)) {
           setSelectedId(activeList[0].id);
         }
       } else {
@@ -66,7 +70,7 @@ function QueuePageContent() {
     } finally {
       if (isInitial) setLoading(false);
     }
-  }, [paramBookingId, selectedId]);
+  }, [paramBookingId]);
 
   useEffect(() => {
     load(true);

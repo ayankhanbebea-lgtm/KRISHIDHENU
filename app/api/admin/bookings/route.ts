@@ -4,10 +4,19 @@ import { getDb, nowIso } from "@/lib/db";
 import { recordAudit, sendNotification } from "@/lib/services";
 import { normalizeDateToYMD } from "@/lib/format";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export async function GET(req: NextRequest) {
+  const reqStart = Date.now();
+  const requestId = `adm_bkg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const timestamp = new Date().toISOString();
+
   const session = await getSession();
   if (!session || session.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const db = getDb();
+  const dbIdentifier = process.env.DATABASE_PATH ? "custom_env_db" : "default_sqlite_db";
+
   const url = new URL(req.url);
   const rawDate = url.searchParams.get("date") || "";
   const centreId = url.searchParams.get("centreId") || "";
@@ -21,7 +30,6 @@ export async function GET(req: NextRequest) {
   if (rawDate) { conditions.push("s.date = ?"); vals.push(normalizeDateToYMD(rawDate)); }
   if (centreId) { conditions.push("b.centre_id = ?"); vals.push(centreId); }
   if (status) { conditions.push("b.status = ?"); vals.push(status); }
-
 
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
@@ -51,7 +59,16 @@ export async function GET(req: NextRequest) {
     ${where}
   `).get(...vals) as { c: number };
 
-  return NextResponse.json({ bookings, total: totalRow.c, page, limit });
+  const duration = Date.now() - reqStart;
+  console.log(`[ADMIN_BOOKINGS_TRACE] reqId=${requestId} time=${timestamp} db=${dbIdentifier} date=${rawDate || "all"} centre=${centreId || "all"} total=${totalRow.c} duration=${duration}ms`);
+
+  const response = NextResponse.json({ bookings, total: totalRow.c, page, limit, requestId, timestamp });
+  response.headers.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
+  response.headers.set("Pragma", "no-cache");
+  response.headers.set("Expires", "0");
+  response.headers.set("X-Request-Id", requestId);
+
+  return response;
 }
 
 export async function POST(req: NextRequest) {

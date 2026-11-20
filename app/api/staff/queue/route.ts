@@ -5,10 +5,20 @@ import { getStaffCentre } from "@/lib/staff";
 import { currentlyServingToken, centreLoad } from "@/lib/services";
 import { getTodayIST, normalizeDateToYMD } from "@/lib/format";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export async function GET(req: NextRequest) {
+  const reqStart = Date.now();
+  const requestId = `staff_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const timestamp = new Date().toISOString();
+
   const session = await getSession();
   if (!session || (session.role !== "STAFF" && session.role !== "ADMIN")) {
-    return NextResponse.json({ error: "Please login with a Staff account (e.g. 9100000002 for Centre 02)." }, { status: 401 });
+    return NextResponse.json(
+      { error: "Please login with a Staff account (e.g. 9100000002 for Centre 02)." },
+      { status: 401 }
+    );
   }
 
   const url = new URL(req.url);
@@ -17,6 +27,7 @@ export async function GET(req: NextRequest) {
   const todayIST = getTodayIST();
 
   const db = getDb();
+  const dbIdentifier = process.env.DATABASE_PATH ? "custom_env_db" : "default_sqlite_db";
 
   let centre = requestedCentreId
     ? (db.prepare(`SELECT id, name, code FROM procurement_centres WHERE id = ?`).get(requestedCentreId) as any)
@@ -32,8 +43,7 @@ export async function GET(req: NextRequest) {
 
   // Filter by date if requested (unless "all")
   const activeDate = requestedDate === "all" ? "all" : normalizeDateToYMD(requestedDate || todayIST);
-  
-  const queryStart = Date.now();
+
   // Unified Query matching Admin Database Query
   const allRows = db
     .prepare(
@@ -59,23 +69,15 @@ export async function GET(req: NextRequest) {
        ORDER BY s.date ASC, COALESCE(q.position, 999) ASC, b.created_at ASC`
     )
     .all(centre.id) as any[];
-  const queryEnd = Date.now();
 
   // Normalized date comparison
   const filteredRows = activeDate === "all"
     ? allRows
     : allRows.filter((r) => normalizeDateToYMD(r.slotDate) === activeDate);
 
-  console.log(`\n==================================================`);
-  console.log(`[STEP 3: STAFF FETCH] Raw records received by Staff BEFORE ANY FILTER: COUNT = ${allRows.length}`);
-  console.log(`  Staff Centre: ${centre.name} (${centre.code}, ID: ${centre.id})`);
-  console.log(`  All Raw Tokens in Centre:`, allRows.map((r) => `${r.token} (${r.farmerName})`));
-  console.log(`[STEP 4: FILTER]`);
-  console.log(`  After date filter (${activeDate}) = ${filteredRows.length}`);
-  console.log(`  After centre filter (${centre.code}) = ${filteredRows.length}`);
-  console.log(`  Filtered Tokens for UI:`, filteredRows.map((r) => `${r.token} (${r.farmerName})`));
-  console.log(`==================================================\n`);
-
+  const activeTotal = allRows.filter(
+    (r) => !["COMPLETED", "PROCUREMENT_COMPLETED", "PAYMENT_PROCESSING", "PAYMENT_COMPLETED", "CANCELLED", "NO_SHOW"].includes(r.status)
+  ).length;
 
   const summary = {
     total: filteredRows.length,
@@ -102,11 +104,12 @@ export async function GET(req: NextRequest) {
   const serving = currentlyServingToken(centre.id, activeDate === "all" ? todayIST : activeDate);
   const load = centreLoad(centre.id, activeDate === "all" ? todayIST : activeDate);
 
-  const activeTotal = allRows.filter(
-    (r) => !["COMPLETED", "PROCUREMENT_COMPLETED", "PAYMENT_PROCESSING", "PAYMENT_COMPLETED", "CANCELLED", "NO_SHOW"].includes(r.status)
-  ).length;
+  const respEnd = Date.now();
+  console.log(`[STAFF_QUEUE_TRACE] reqId=${requestId} time=${timestamp} db=${dbIdentifier} centre=${centre.code} date=${activeDate} total=${filteredRows.length} active=${activeTotal} duration=${respEnd - reqStart}ms`);
 
-  return NextResponse.json({
+  const response = NextResponse.json({
+    requestId,
+    timestamp,
     centre,
     allCentres,
     date: activeDate,
@@ -118,6 +121,19 @@ export async function GET(req: NextRequest) {
     upcomingSummary,
     serving,
     load,
+    debug: {
+      dbIdentifier,
+      executionMs: respEnd - reqStart,
+      isCache: false,
+    },
   });
-}
 
+  // Strict anti-caching headers for real-time queue data
+  response.headers.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
+  response.headers.set("Pragma", "no-cache");
+  response.headers.set("Expires", "0");
+  response.headers.set("X-Request-Id", requestId);
+  response.headers.set("X-Response-Time", String(respEnd));
+
+  return response;
+}

@@ -11,6 +11,7 @@
     "seed": "tsx prisma/seed.ts",
     "db:push": "prisma db push",
     "test:regression": "tsx scripts/regression-test.ts",
+    "test:consistency": "tsx scripts/test-booking-consistency.ts",
     "test:ai": "tsx scripts/test-ai-assistant.ts",
     "test:auth": "tsx scripts/test-auth-resilience.ts"
   },

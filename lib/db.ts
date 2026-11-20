@@ -416,7 +416,9 @@ export function ensureBaselineData(db: DatabaseSync) {
 
 export function getDb(): DatabaseSync {
   if (!global.__procurementDb) {
-    const defaultDbPath = path.join(process.cwd(), "prisma", "dev.db");
+    const defaultDbPath = process.env.VERCEL
+      ? path.join("/tmp", "dev.db")
+      : path.join(process.cwd(), "prisma", "dev.db");
     const dbPath = process.env.DATABASE_PATH || defaultDbPath;
     const dbDir = path.dirname(dbPath);
     if (!fs.existsSync(dbDir)) {
