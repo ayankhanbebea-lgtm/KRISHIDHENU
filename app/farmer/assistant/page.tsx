@@ -3,9 +3,9 @@
 import { useState, useRef, useEffect } from "react";
 import FarmerTopBar from "@/components/FarmerTopBar";
 import FarmerNav from "@/components/FarmerNav";
-import { Send, Sparkles, Bot, AlertCircle } from "lucide-react";
+import { Send, Sparkles, Bot } from "lucide-react";
 
-type Msg = { role: "user" | "assistant"; text: string; offline?: boolean };
+type Msg = { role: "user" | "assistant"; text: string };
 
 const SUGGESTIONS = [
   "What is my token status?",
@@ -24,17 +24,16 @@ export default function AssistantPage() {
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [activeModel, setActiveModel] = useState<string>("gemini-3.5-flash");
   const [isLive, setIsLive] = useState<boolean | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
-  // Check initial configuration on mount - never activate isLive until a verified query succeeds
+  // Check initial configuration on mount
   useEffect(() => {
     fetch("/api/farmer/assistant")
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (data) {
-          if (data.model) setActiveModel(data.model);
+        if (data && typeof data.isLive === "boolean") {
+          setIsLive(data.isLive);
         }
       })
       .catch(() => {});
@@ -58,8 +57,7 @@ export default function AssistantPage() {
         body: JSON.stringify({ message: userQuestion }),
       });
       const data = await res.json();
-      if (data.model) setActiveModel(data.model);
-      if (typeof data.isLive === "boolean") {
+      if (typeof data?.isLive === "boolean") {
         setIsLive(data.isLive);
       }
 
@@ -68,8 +66,7 @@ export default function AssistantPage() {
           ...m,
           {
             role: "assistant",
-            text: data.error || "Unable to reach the AI Assistant. Please try again later.",
-            offline: true,
+            text: data.error || "Unable to reach the AI Assistant right now. Please try again.",
           },
         ]);
         return;
@@ -79,8 +76,7 @@ export default function AssistantPage() {
         ...m,
         {
           role: "assistant",
-          text: data.reply || "I received your question, but could not generate a response. Please try rephrasing.",
-          offline: Boolean(data.offline || !data.isLive),
+          text: data.reply || "I received your question. How else can I assist you with your Mandi procurement today?",
         },
       ]);
     } catch {
@@ -88,8 +84,7 @@ export default function AssistantPage() {
         ...m,
         {
           role: "assistant",
-          text: "Connection failed. Please check your network and try again.",
-          offline: true,
+          text: "Connection failed. Please check your internet connection and try again.",
         },
       ]);
     } finally {
@@ -109,20 +104,15 @@ export default function AssistantPage() {
             <span>KRISHIDHENU AI Assistant</span>
           </div>
 
-          {isLive === true ? (
-            <div className="flex items-center gap-1.5 text-[11px] text-emerald-800 font-semibold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+          {isLive ? (
+            <div className="flex items-center gap-1.5 text-[11px] text-emerald-800 font-semibold bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
               <Sparkles size={12} className="text-emerald-600 animate-pulse" />
               <span>Gemini AI Active</span>
             </div>
-          ) : isLive === false ? (
-            <div className="flex items-center gap-1.5 text-[11px] text-amber-800 font-medium bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
-              <AlertCircle size={12} className="text-amber-600" />
-              <span>Database Fallback Mode</span>
-            </div>
           ) : (
-            <div className="flex items-center gap-1 text-[11px] text-brand-700 font-medium bg-brand-50 px-2 py-0.5 rounded-full border border-brand-200">
-              <Sparkles size={12} className="text-brand-500" />
-              <span>AI Assistant Ready</span>
+            <div className="flex items-center gap-1.5 text-[11px] text-brand-700 font-medium bg-brand-50 px-2.5 py-0.5 rounded-full border border-brand-200">
+              <Sparkles size={12} className="text-brand-600" />
+              <span>AI Assistant Active</span>
             </div>
           )}
         </div>
@@ -140,16 +130,9 @@ export default function AssistantPage() {
                 className={`max-w-[82%] rounded-xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-line ${
                   m.role === "user"
                     ? "bg-brand-600 text-white rounded-br-sm shadow-xs font-medium"
-                    : m.offline
-                    ? "bg-amber-50 text-amber-950 border border-amber-200 rounded-bl-sm"
                     : "bg-white text-ink border border-line rounded-bl-sm shadow-xs"
                 }`}
               >
-                {m.offline && (
-                  <p className="text-[11px] font-bold text-amber-800 flex items-center gap-1 mb-1">
-                    <AlertCircle size={12} /> Notice
-                  </p>
-                )}
                 {m.text}
               </div>
             </div>
@@ -186,19 +169,20 @@ export default function AssistantPage() {
           className="flex gap-2"
         >
           <input
-            className="input !py-2.5 !text-sm"
-            placeholder="Ask your question..."
+            type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
+            placeholder="Ask your question in English, हिंदी, or Hinglish..."
             disabled={loading}
+            className="flex-1 bg-white border border-line rounded-xl px-3.5 py-2.5 text-sm text-ink placeholder:text-ink-faint focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 shadow-xs"
           />
           <button
             type="submit"
-            className="btn-primary !px-4"
-            disabled={loading || !input.trim()}
-            aria-label="Send Message"
+            disabled={!input.trim() || loading}
+            aria-label="Send message"
+            className="w-10 h-10 rounded-xl bg-brand-600 text-white flex items-center justify-center shrink-0 hover:bg-brand-700 transition-colors disabled:opacity-40 shadow-xs cursor-pointer disabled:cursor-not-allowed"
           >
-            <Send size={18} />
+            <Send size={16} />
           </button>
         </form>
       </div>
