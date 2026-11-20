@@ -126,31 +126,40 @@ export default function StaffDashboard() {
             `[STAFF_UI_TRACE] time=${timestamp} reqId=${reqId} endpoint=/api/staff/queue status=${res.status} returned=${incomingRows.length} prev=${prevRows.length} isInitial=${isInitial}`
           );
 
-          if (!prevData || prevRows.length === 0) {
+          if (!prevData) {
             return d;
           }
 
-          if (incomingRows.length > 0) {
-            return d;
+          // Merge rows by unique booking ID to eliminate container flicker
+          const rowMap = new Map();
+          for (const r of prevRows) {
+            if (r?.id) rowMap.set(r.id, r);
           }
-
-          // If background refresh returned 0 rows but we have valid records for this centre & date, preserve them
-          const sameDate = !activeDate || activeDate === "all" || prevData.date === d.date;
-          const sameCentre = !activeCentre || prevData.centre?.id === d.centre?.id;
-
-          if (prevRows.length > 0 && sameDate && sameCentre) {
-            console.warn(
-              `[STAFF_UI_PRESERVE] time=${timestamp} reqId=${reqId}: Preserving ${prevRows.length} existing bookings against empty response`
-            );
-            return {
-              ...prevData,
-              todayIST: d.todayIST || prevData.todayIST,
-              allCentres: d.allCentres?.length ? d.allCentres : prevData.allCentres,
-              serving: d.serving !== undefined ? d.serving : prevData.serving,
-            };
+          for (const r of incomingRows) {
+            if (r?.id) rowMap.set(r.id, r);
           }
+          const mergedRows = Array.from(rowMap.values());
 
-          return d;
+          // Recompute accurate summary counters from verified merged bookings
+          const summary = {
+            total: mergedRows.length,
+            waiting: mergedRows.filter((r) => r.status === "BOOKED").length,
+            inProgress: mergedRows.filter((r) => ["ARRIVED", "VERIFIED", "WEIGHING", "PROCUREMENT_IN_PROGRESS"].includes(r.status)).length,
+            completed: mergedRows.filter((r) => ["PROCUREMENT_COMPLETED", "PAYMENT_PROCESSING", "PAYMENT_COMPLETED"].includes(r.status)).length,
+            paymentPending: mergedRows.filter((r) => r.paymentStatus && r.paymentStatus !== "PAID").length,
+          };
+
+          return {
+            ...d,
+            centre: d.centre || prevData.centre,
+            rows: mergedRows,
+            summary,
+            totalCentreBookings: Math.max(d.totalCentreBookings || 0, prevData.totalCentreBookings || 0, mergedRows.length),
+            activeTotal: Math.max(d.activeTotal || 0, prevData.activeTotal || 0, summary.waiting + summary.inProgress),
+            serving: d.serving !== undefined && d.serving !== null ? d.serving : prevData.serving,
+            load: d.load || prevData.load,
+            allCentres: d.allCentres?.length ? d.allCentres : prevData.allCentres,
+          };
         });
 
         // Populate initial date and centre selection without triggering effect recreation

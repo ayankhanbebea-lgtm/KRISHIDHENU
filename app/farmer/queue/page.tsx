@@ -44,13 +44,25 @@ function QueuePageContent() {
     try {
       const res = await fetch(`/api/farmer/current?_t=${Date.now()}`, { cache: "no-store" });
       if (!res.ok) {
-        setBookings([]);
+        if (isInitial) setBookings([]);
         setStale(true);
         return;
       }
       const data = await res.json();
       const activeList = data.bookings || (data.booking ? [data.booking] : []);
-      setBookings(activeList);
+
+      setBookings((prevBookings) => {
+        if (!prevBookings || prevBookings.length === 0) return activeList;
+        const map = new Map<string, any>();
+        for (const b of prevBookings) {
+          if (b?.id) map.set(b.id, b);
+        }
+        for (const b of activeList) {
+          if (b?.id) map.set(b.id, b);
+        }
+        const merged = Array.from(map.values());
+        return merged.length > 0 ? merged : activeList;
+      });
 
       if (activeList.length > 0) {
         if (paramBookingId && activeList.some((b: any) => b.id === paramBookingId)) {
@@ -58,8 +70,6 @@ function QueuePageContent() {
         } else if (!selectedIdRef.current || !activeList.some((b: any) => b.id === selectedIdRef.current)) {
           setSelectedId(activeList[0].id);
         }
-      } else {
-        setSelectedId("");
       }
 
       setLastUpdated(new Date());

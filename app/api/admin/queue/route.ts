@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
   const requestId = `adm_q_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const timestamp = new Date().toISOString();
 
-  const session = await getSession();
+  const session = await getSession(req);
   if (!session || session.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const db = getDb();
   const dbIdentifier = process.env.DATABASE_PATH ? "custom_env_db" : "default_sqlite_db";

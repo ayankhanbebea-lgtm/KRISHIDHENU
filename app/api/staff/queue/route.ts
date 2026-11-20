@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
   const requestId = `staff_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const timestamp = new Date().toISOString();
 
-  const session = await getSession();
+  const session = await getSession(req);
   if (!session || (session.role !== "STAFF" && session.role !== "ADMIN")) {
     return NextResponse.json(
       { error: "Please login with a Staff account (e.g. 9100000002 for Centre 02)." },

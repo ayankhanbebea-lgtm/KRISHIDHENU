@@ -51,23 +51,25 @@ export default function AdminDashboard() {
 
       setData((prevData: any) => {
         if (!prevData) return res;
-        const prevBookings = prevData.overview?.todaysBookings || 0;
-        const newBookings = res.overview?.todaysBookings || 0;
+        const prevOverview = prevData.overview;
+        const newOverview = res.overview;
 
-        if (prevBookings > 0 && newBookings === 0) {
-          console.warn(`[ADMIN_OVERVIEW_PRESERVE] reqId=${reqId}: Preserving active metrics against cold empty response`);
-          return {
-            ...res,
-            overview: {
-              ...res.overview,
-              todaysBookings: prevData.overview.todaysBookings,
-              activeQueues: Math.max(res.overview.activeQueues || 0, prevData.overview.activeQueues || 0),
-              completedProcurements: Math.max(res.overview.completedProcurements || 0, prevData.overview.completedProcurements || 0),
-              pendingPayments: prevData.overview.pendingPayments,
+        return {
+          ...res,
+          overview: {
+            ...newOverview,
+            todaysBookings: Math.max(newOverview?.todaysBookings || 0, prevOverview?.todaysBookings || 0),
+            activeQueues: Math.max(newOverview?.activeQueues || 0, prevOverview?.activeQueues || 0),
+            completedProcurements: Math.max(newOverview?.completedProcurements || 0, prevOverview?.completedProcurements || 0),
+            totalFarmers: Math.max(newOverview?.totalFarmers || 0, prevOverview?.totalFarmers || 0),
+            paymentStats: {
+              ...newOverview?.paymentStats,
+              pendingCount: Math.max(newOverview?.paymentStats?.pendingCount || 0, prevOverview?.paymentStats?.pendingCount || 0),
+              pendingAmount: Math.max(newOverview?.paymentStats?.pendingAmount || 0, prevOverview?.paymentStats?.pendingAmount || 0),
+              paidAmount: Math.max(newOverview?.paymentStats?.paidAmount || 0, prevOverview?.paymentStats?.paidAmount || 0),
             },
-          };
-        }
-        return res;
+          },
+        };
       });
     } finally {
       inFlightRef.current = false;

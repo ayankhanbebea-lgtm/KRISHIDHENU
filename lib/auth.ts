@@ -270,10 +270,19 @@ export async function getSession(req?: { cookies?: { get: (name: string) => { va
       if (auth && auth.startsWith("Bearer ")) {
         token = auth.slice(7).trim();
       }
+      if (!token) {
+        const cookieHeader = req.headers.get("cookie");
+        if (cookieHeader) {
+          const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${COOKIE_NAME}=([^;]+)`));
+          if (match) token = decodeURIComponent(match[1]);
+        }
+      }
     }
     if (!token) {
-      const store = await cookies();
-      token = store.get(COOKIE_NAME)?.value;
+      try {
+        const store = await cookies();
+        token = store.get(COOKIE_NAME)?.value;
+      } catch {}
     }
     if (!token) return null;
     return validateSession(token);

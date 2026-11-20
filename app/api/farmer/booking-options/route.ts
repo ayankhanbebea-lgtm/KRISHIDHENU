@@ -5,7 +5,7 @@ import { rankCentres, getSlotAvailability, ensureSlotsForDate } from "@/lib/serv
 import { getTodayIST, normalizeDateToYMD } from "@/lib/format";
 
 export async function GET(req: NextRequest) {
-  const session = await getSession();
+  const session = await getSession(req);
   if (!session || session.role !== "FARMER") {
     return NextResponse.json({ error: "Please login as a farmer." }, { status: 401 });
   }

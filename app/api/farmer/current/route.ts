@@ -7,12 +7,12 @@ import { farmersAhead, estimateWaitMinutes, currentlyServingToken } from "@/lib/
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-export async function GET() {
+export async function GET(req: Request) {
   const reqStart = Date.now();
   const requestId = `frm_cur_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const timestamp = new Date().toISOString();
 
-  const session = await getSession();
+  const session = await getSession(req);
   if (!session || session.role !== "FARMER") {
     return NextResponse.json({ error: "Please login as a farmer." }, { status: 401 });
   }

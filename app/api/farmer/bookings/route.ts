@@ -6,8 +6,8 @@ import { createBookingSchema } from "@/lib/validation";
 import { generateToken, nextQueuePosition, sendNotification, recordAudit } from "@/lib/services";
 import { broadcastRealtimeEvent } from "@/lib/realtime";
 
-export async function GET() {
-  const session = await getSession();
+export async function GET(req: NextRequest) {
+  const session = await getSession(req);
   if (!session || session.role !== "FARMER") {
     return NextResponse.json({ error: "Please login as a farmer." }, { status: 401 });
   }
@@ -35,7 +35,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await getSession();
+  const session = await getSession(req);
   if (!session || session.role !== "FARMER") {
     return NextResponse.json({ error: "Please login as a farmer." }, { status: 401 });
   }

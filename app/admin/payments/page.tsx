@@ -123,25 +123,31 @@ export default function AdminPaymentsPage() {
         `[ADMIN_PAYMENTS_TRACE] time=${timestamp} reqId=${reqId} endpoint=/api/admin/payments returned=${incomingPayments.length} totalRecords=${data.stats?.totalRecords}`
       );
 
-      // Reconcile and preserve: do not replace valid records with empty array on cold responses
+      // Reconcile and preserve: merge payments by ID to prevent flicker
       setPayments((prevPayments: any[]) => {
-        if (incomingPayments.length > 0) return incomingPayments;
-        if (prevPayments.length > 0 && (!sf || sf === "ALL") && (!cf || cf === "ALL") && !df && !sq) {
-          console.warn(`[ADMIN_PAYMENTS_PRESERVE] reqId=${reqId}: Preserving ${prevPayments.length} existing payment records`);
-          return prevPayments;
+        if (!prevPayments || prevPayments.length === 0) return incomingPayments;
+        if (sf && sf !== "ALL") return incomingPayments;
+        const map = new Map<string, any>();
+        for (const p of prevPayments) {
+          if (p?.id) map.set(p.id, p);
         }
-        return incomingPayments;
+        for (const p of incomingPayments) {
+          if (p?.id) map.set(p.id, p);
+        }
+        return Array.from(map.values());
       });
 
       if (data.stats) {
         setStats((prevStats: any) => {
-          if (data.stats.totalRecords > 0 || !prevStats?.totalRecords) {
-            return data.stats;
-          }
-          if (prevStats.totalRecords > 0) {
-            return prevStats; // Preserve valid stats
-          }
-          return data.stats;
+          if (!prevStats) return data.stats;
+          return {
+            totalRecords: Math.max(data.stats.totalRecords || 0, prevStats.totalRecords || 0),
+            totalDisbursed: Math.max(data.stats.totalDisbursed || 0, prevStats.totalDisbursed || 0),
+            pendingVerification: Math.max(data.stats.pendingVerification || 0, prevStats.pendingVerification || 0),
+            readyToPay: Math.max(data.stats.readyToPay || 0, prevStats.readyToPay || 0),
+            processingCount: Math.max(data.stats.processingCount || 0, prevStats.processingCount || 0),
+            failedCount: data.stats.failedCount ?? prevStats.failedCount ?? 0,
+          };
         });
       }
 

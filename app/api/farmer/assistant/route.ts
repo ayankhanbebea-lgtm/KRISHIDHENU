@@ -116,11 +116,12 @@ export async function GET(req: NextRequest) {
   const apiKey = process.env.GEMINI_API_KEY || process.env.AI_PROVIDER_API_KEY;
   const isConfigured = Boolean(apiKey && !apiKey.startsWith("your_") && apiKey.trim() !== "");
 
+  // Never return isLive: true on initial GET. Only real successful POST responses can activate isLive.
   return NextResponse.json({
     status: isConfigured ? "configured" : "unconfigured",
     model: UNIQUE_MODELS[0] || "gemini-3.5-flash",
     defaultLanguage: "en",
-    isLive: isConfigured,
+    isLive: false,
   });
 }
 
@@ -262,19 +263,26 @@ STRICT OPERATIONAL RULES:
         } else {
           lastStatus = response.status;
           lastError = await response.json().catch(() => ({}));
-          console.warn(`[Gemini API] Model ${modelToTry} returned ${response.status}:`, lastError);
+          const safeStatusText = response.statusText || "Unknown Status";
+          const safeReason = lastError?.error?.details?.[0]?.reason || lastError?.error?.status || "API_ERROR";
+          console.warn(`[Gemini API] Model ${modelToTry} returned HTTP ${response.status} (${safeStatusText}, reason=${safeReason})`);
 
-          // If model is deprecated (404) or experiencing temporary demand spikes (503), try next model
+          // If model is not found (404) or temporary load spike (503), try fallback candidate model
           if (response.status === 404 || response.status === 503) {
             continue;
           }
-          // If auth/credentials error (400, 403), stop
+          // For authentication/quota failures (401, 403, 429), stop trying other models to avoid repeated failures
           break;
         }
       } catch (err: any) {
         clearTimeout(timeout);
         lastError = err;
-        console.warn(`[Gemini API] Exception with model ${modelToTry}:`, err?.message);
+        if (err?.name === "AbortError") {
+          lastStatus = 504;
+          console.warn(`[Gemini API] Request timeout (15s) with model ${modelToTry}`);
+        } else {
+          console.warn(`[Gemini API] Network exception with model ${modelToTry}:`, err?.message);
+        }
       }
     }
 
@@ -288,20 +296,58 @@ STRICT OPERATIONAL RULES:
       });
     }
 
-    let userFriendlyError = "The AI Assistant is temporarily unable to connect to the Google Gemini service.";
-    if (lastStatus === 400 || lastStatus === 403) {
-      userFriendlyError = "Gemini API key is invalid or lacks necessary permissions. Please check GEMINI_API_KEY in Vercel Project Settings.";
+    // Build specific, multilingual user-friendly messages for each exact failure type
+    const tokenStr = context.activeBooking?.token ? `Token: ${context.activeBooking.token}` : "no active token";
+    const aheadStr = context.queueMetrics?.farmersAhead != null ? `${context.queueMetrics.farmersAhead} farmers ahead` : "queue not started";
+    const mspSummary = context.standardMspRates?.map((c: any) => `${c.name}: ₹${c.mspRate}`).join(", ") || "Wheat: ₹2275";
+
+    let explanationEn = "";
+    let explanationHi = "";
+    let explanationHing = "";
+
+    if (lastStatus === 401) {
+      explanationEn = "Google Gemini API authentication failed (HTTP 401: Invalid or expired API key). Please ensure a valid Google AI Studio key (starting with 'AIzaSy...') is configured in GEMINI_API_KEY.";
+      explanationHi = "Google Gemini API प्रमाणीकरण विफल रहा (HTTP 401: अमान्य या समाप्त API कुंजी)। कृपया Vercel सेटिंग्स में एक मान्य Gemini API कुंजी कॉन्फ़िगर करें।";
+      explanationHing = "Google Gemini API authentication fail ho gaya (HTTP 401: Invalid ya expired API key). Kripya Vercel settings me valid Gemini API key set karein.";
+    } else if (lastStatus === 403) {
+      explanationEn = "Google Gemini API access forbidden (HTTP 403: Missing permissions or restricted key). Please check API key restrictions in Google Cloud Console.";
+      explanationHi = "Google Gemini API एक्सेस प्रतिबंधित है (HTTP 403)। API कुंजी के पास आवश्यक अनुमतियाँ नहीं हैं।";
+      explanationHing = "Google Gemini API access forbidden hai (HTTP 403). API key ke paas required permissions nahi hain.";
     } else if (lastStatus === 429) {
-      userFriendlyError = "Gemini API rate limit reached. Please wait a moment and try again.";
+      explanationEn = "Google Gemini API rate limit or quota exceeded (HTTP 429). The system is temporarily using verified local Mandi records.";
+      explanationHi = "Google Gemini दर सीमा या कोटा समाप्त हो गया (HTTP 429)। सिस्टम वर्तमान में सत्यापित स्थानीय मंडी रिकॉर्ड का उपयोग कर रहा है।";
+      explanationHing = "Google Gemini rate limit ya quota exceed ho gaya hai (HTTP 429). Kripya thodi der baad try karein.";
+    } else if (lastStatus === 500 || lastStatus === 503) {
+      explanationEn = "Google Gemini service is temporarily experiencing high load (HTTP 503). Showing your verified procurement records below.";
+      explanationHi = "Google Gemini सेवा में वर्तमान में अधिक लोड है (HTTP 503)। आपके सत्यापित खरीद रिकॉर्ड नीचे दिए गए हैं।";
+      explanationHing = "Google Gemini service par abhi high load hai (HTTP 503). Aapke verified records neeche diye gaye hain.";
+    } else if (lastStatus === 504) {
+      explanationEn = "Google Gemini request timed out. Showing your verified procurement records below.";
+      explanationHi = "Google Gemini अनुरोध का समय समाप्त (टाइमआउट) हो गया। आपके सत्यापित खरीद रिकॉर्ड नीचे दिए गए हैं।";
+      explanationHing = "Google Gemini request timeout ho gaya. Aapke verified records neeche diye gaye hain.";
+    } else {
+      explanationEn = "The AI Assistant is currently operating in verified database mode.";
+      explanationHi = "एआई सहायक वर्तमान में सत्यापित डेटाबेस मोड में कार्य कर रहा है।";
+      explanationHing = "AI Assistant abhi verified database mode me chal raha hai.";
+    }
+
+    let finalFallbackReply = "";
+    if (detectedLanguage === "hi") {
+      finalFallbackReply = `नमस्ते ${session.name} जी!\n\n${explanationHi}\n\n📋 **आपके सत्यापित खरीद विवरण:**\n• सक्रिय टोकन: ${tokenStr}\n• कतार स्थिति: ${aheadStr}\n• सरकारी समर्थन मूल्य (MSP): ${mspSummary}\n\nयदि आपके पास टोकन या स्लॉट से संबंधित कोई प्रश्न है, तो आप अपने डैशबोर्ड पर सभी विवरण देख सकते हैं।`;
+    } else if (detectedLanguage === "hinglish") {
+      finalFallbackReply = `Namaste ${session.name} ji!\n\n${explanationHing}\n\n📋 **Aapka Verified Mandi Data:**\n• Active Token: ${tokenStr}\n• Queue Status: ${aheadStr}\n• Official MSP Rates: ${mspSummary}\n\nAap dashboard par apna slot ya payment status bhi directly check kar sakte hain.`;
+    } else {
+      finalFallbackReply = `Greetings ${session.name},\n\n${explanationEn}\n\n📋 **Your Verified Procurement Status:**\n• Active Token: ${tokenStr}\n• Queue Position: ${aheadStr}\n• Official MSP Rates: ${mspSummary}\n\nYou can also manage your slots and track DBT payment disbursements directly on your dashboard.`;
     }
 
     return NextResponse.json(
       {
-        reply: `${userFriendlyError} (Your current token is ${context.activeBooking?.token || "none"}).`,
-        error: lastError?.error?.message || "Service unavailable",
+        reply: finalFallbackReply,
+        error: lastError?.error?.message || `HTTP ${lastStatus} from Gemini service`,
         isLive: false,
         model: successfulModel,
         language: detectedLanguage,
+        status: "fallback",
       },
       { status: 200 }
     );

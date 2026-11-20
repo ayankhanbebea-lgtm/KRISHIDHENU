@@ -95,14 +95,18 @@ export default function AdminBookingsPage() {
         );
 
         setBookings((prevBookings: BookingItem[] | null) => {
-          if (incomingBookings.length > 0) return incomingBookings;
-          if (prevBookings && prevBookings.length > 0 && !fd && !fc && !fs) {
-            console.warn(
-              `[ADMIN_BOOKINGS_PRESERVE] reqId=${reqId}: Preserving ${prevBookings.length} existing bookings against empty response`
-            );
-            return prevBookings;
+          if (!prevBookings || prevBookings.length === 0) return incomingBookings;
+          if (fd || fc || fs) {
+            return incomingBookings.length > 0 ? incomingBookings : prevBookings;
           }
-          return incomingBookings;
+          const map = new Map<string, BookingItem>();
+          for (const b of prevBookings) {
+            if (b?.id) map.set(b.id, b);
+          }
+          for (const b of incomingBookings) {
+            if (b?.id) map.set(b.id, b);
+          }
+          return Array.from(map.values());
         });
       }
     } finally {

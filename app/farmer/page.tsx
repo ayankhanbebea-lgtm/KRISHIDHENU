@@ -82,8 +82,24 @@ export default function FarmerHomePage() {
         throw new Error("Failed to load booking information.");
       }
       const bData = await bRes.json();
-      setBookings(bData.bookings || (bData.booking ? [bData.booking] : []));
-      setActiveCount(bData.activeCount ?? (bData.bookings ? bData.bookings.length : (bData.booking ? 1 : 0)));
+      const incomingList = bData.bookings || (bData.booking ? [bData.booking] : []);
+
+      setBookings((prevBookings) => {
+        if (!prevBookings || prevBookings.length === 0) return incomingList;
+        const map = new Map<string, any>();
+        for (const b of prevBookings) {
+          if (b?.id) map.set(b.id, b);
+        }
+        for (const b of incomingList) {
+          if (b?.id) map.set(b.id, b);
+        }
+        return Array.from(map.values());
+      });
+
+      setActiveCount((prev) => {
+        const incomingCount = bData.activeCount ?? incomingList.length;
+        return Math.max(prev || 0, incomingCount);
+      });
       setMaxLimit(bData.maxLimit ?? 3);
       setIsMaxReached(Boolean(bData.isMaxReached));
 
@@ -92,7 +108,18 @@ export default function FarmerHomePage() {
         const pRes = await fetch("/api/farmer/payments");
         if (pRes.ok) {
           const pData = await pRes.json();
-          setPayments(pData.payments || []);
+          const incomingPayments = pData.payments || [];
+          setPayments((prevPayments) => {
+            if (!prevPayments || prevPayments.length === 0) return incomingPayments;
+            const map = new Map<string, any>();
+            for (const p of prevPayments) {
+              if (p?.id) map.set(p.id, p);
+            }
+            for (const p of incomingPayments) {
+              if (p?.id) map.set(p.id, p);
+            }
+            return Array.from(map.values());
+          });
         }
       } catch (pErr) {
         console.error("[Farmer Dashboard Payments Error]", pErr);

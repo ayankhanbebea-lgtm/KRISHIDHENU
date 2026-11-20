@@ -28,19 +28,12 @@ export default function AssistantPage() {
   const [isLive, setIsLive] = useState<boolean | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
-  // Check initial configuration on mount
+  // Check initial configuration on mount - never activate isLive until a verified query succeeds
   useEffect(() => {
     fetch("/api/farmer/assistant")
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (data) {
-          if (typeof data.isLive === "boolean") {
-            setIsLive(data.isLive);
-          } else if (data.status === "configured") {
-            setIsLive(true);
-          } else if (data.status === "unconfigured") {
-            setIsLive(false);
-          }
           if (data.model) setActiveModel(data.model);
         }
       })
@@ -124,11 +117,12 @@ export default function AssistantPage() {
           ) : isLive === false ? (
             <div className="flex items-center gap-1.5 text-[11px] text-amber-800 font-medium bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
               <AlertCircle size={12} className="text-amber-600" />
-              <span>Demo Mode (Offline)</span>
+              <span>Database Fallback Mode</span>
             </div>
           ) : (
-            <div className="flex items-center gap-1 text-[11px] text-brand-700 font-medium">
-              <span className="font-mono">{activeModel}</span>
+            <div className="flex items-center gap-1 text-[11px] text-brand-700 font-medium bg-brand-50 px-2 py-0.5 rounded-full border border-brand-200">
+              <Sparkles size={12} className="text-brand-500" />
+              <span>AI Assistant Ready</span>
             </div>
           )}
         </div>

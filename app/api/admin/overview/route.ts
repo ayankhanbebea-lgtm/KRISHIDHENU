@@ -3,8 +3,8 @@ import { getSession } from "@/lib/auth";
 import { getDb } from "@/lib/db";
 import { adminOverview } from "@/lib/services";
 
-export async function GET() {
-  const session = await getSession();
+export async function GET(req: Request) {
+  const session = await getSession(req);
   if (!session || session.role !== "ADMIN") {
     return NextResponse.json({ error: "Please login as admin." }, { status: 401 });
   }
