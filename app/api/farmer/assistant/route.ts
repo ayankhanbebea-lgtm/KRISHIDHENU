@@ -8,12 +8,12 @@ import { generateIntelligentFarmerResponse, FarmerAssistantContext } from "@/lib
 
 export const dynamic = "force-dynamic";
 
-// Active Gemini models in priority order
+// Active Gemini model configuration
+// Only active, supported Google Gemini Developer API models are allowed.
+// Discontinued models (gemini-1.5-flash, gemini-2.0-flash, etc.) are strictly excluded.
 const CANDIDATE_MODELS = [
   process.env.GEMINI_MODEL,
   "gemini-2.5-flash",
-  "gemini-2.0-flash",
-  "gemini-1.5-flash",
 ].filter((m): m is string => Boolean(m && m.trim()));
 
 const UNIQUE_MODELS = Array.from(new Set(CANDIDATE_MODELS));
@@ -112,14 +112,61 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Please login as a farmer." }, { status: 401 });
   }
 
-  const apiKey = process.env.GEMINI_API_KEY || process.env.AI_PROVIDER_API_KEY;
-  const isConfigured = Boolean(apiKey && !apiKey.startsWith("your_") && apiKey.trim() !== "");
+  const apiKey = (process.env.GEMINI_API_KEY || process.env.AI_PROVIDER_API_KEY || "").trim();
+  const hasKey = Boolean(apiKey && !apiKey.startsWith("your_"));
+  const configuredModel = UNIQUE_MODELS[0] || "gemini-2.5-flash";
+
+  let geminiDiagnostics = null;
+  const wantDiagnostics = req.nextUrl.searchParams.get("diagnostics") === "1";
+
+  if (wantDiagnostics && hasKey) {
+    const pStart = Date.now();
+    try {
+      const pRes = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${configuredModel}:generateContent?key=${apiKey}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-goog-api-key": apiKey,
+          },
+          body: JSON.stringify({
+            contents: [{ role: "user", parts: [{ text: "ping" }] }],
+          }),
+          signal: AbortSignal.timeout(6000),
+        }
+      );
+      const pTime = Date.now() - pStart;
+      const pData = await pRes.json().catch(() => ({}));
+      geminiDiagnostics = {
+        httpStatus: pRes.status,
+        responseTimeMs: pTime,
+        model: configuredModel,
+        success: pRes.ok,
+        reason: pData?.error?.details?.[0]?.reason || pData?.error?.status || (pRes.ok ? "OK" : "API_ERROR"),
+        errorMessage: pData?.error?.message || (pRes.ok ? null : pRes.statusText),
+      };
+    } catch (err: any) {
+      geminiDiagnostics = {
+        httpStatus: 0,
+        responseTimeMs: Date.now() - pStart,
+        model: configuredModel,
+        success: false,
+        reason: err?.name || "NETWORK_ERROR",
+        errorMessage: err?.message || "Failed to reach Gemini endpoint",
+      };
+    }
+  }
 
   return NextResponse.json({
-    status: isConfigured ? "configured" : "ready",
-    model: UNIQUE_MODELS[0] || "gemini-2.5-flash",
+    status: hasKey ? "configured" : "unconfigured",
+    hasKey,
+    keyPrefix: hasKey ? `${apiKey.substring(0, 4)}...` : null,
+    keyLength: apiKey.length,
+    keyType: apiKey.startsWith("AIzaSy") ? "google_ai_studio" : hasKey ? "non_standard_token" : "none",
+    model: configuredModel,
     defaultLanguage: "en",
-    isLive: false,
+    geminiDiagnostics,
   });
 }
 
@@ -153,13 +200,18 @@ export async function POST(req: NextRequest) {
 
     const apiKey = (process.env.GEMINI_API_KEY || process.env.AI_PROVIDER_API_KEY || "").trim();
 
-    // If a Google AI Studio key is configured (AIzaSy...), attempt live Gemini invocation
-    const isGoogleKey = apiKey.startsWith("AIzaSy");
-
+    // Track Gemini execution metrics
     let liveGeminiReply: string | null = null;
     let successfulModel: string = UNIQUE_MODELS[0] || "gemini-2.5-flash";
+    let lastStatus = 0;
+    let lastReason = "";
+    let lastErrorMessage = "";
+    let responseTimeMs = 0;
+    const startTime = Date.now();
 
-    if (isGoogleKey) {
+    // 1. PATH A: REAL GEMINI AI REQUEST
+    // Only attempt if an API key is configured
+    if (apiKey && !apiKey.startsWith("your_")) {
       const systemPrompt = `You are "KRISHIDHENU AI Assistant", an empathetic, truthful, and intelligent agricultural assistant for Indian farmers using the KRISHIDHENU Digital Farmer Procurement & Smart Mandi Management Platform.
 
 === VERIFIED REAL-TIME DATABASE CONTEXT FOR THIS LOGGED-IN FARMER ===
@@ -208,7 +260,10 @@ STRICT OPERATIONAL RULES:
 
           const response = await fetch(geminiUrl, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              "x-goog-api-key": apiKey,
+            },
             signal: controller.signal,
             body: JSON.stringify({
               system_instruction: {
@@ -228,6 +283,8 @@ STRICT OPERATIONAL RULES:
           });
 
           clearTimeout(timeout);
+          responseTimeMs = Date.now() - startTime;
+          lastStatus = response.status;
 
           if (response.ok) {
             const data = await response.json();
@@ -237,26 +294,44 @@ STRICT OPERATIONAL RULES:
               successfulModel = modelToTry;
               break;
             }
+          } else {
+            const errJson = await response.json().catch(() => ({}));
+            lastReason = errJson?.error?.details?.[0]?.reason || errJson?.error?.status || "API_ERROR";
+            lastErrorMessage = errJson?.error?.message || response.statusText || `HTTP ${response.status}`;
+            console.warn(`[Gemini API] Model ${modelToTry} failed: HTTP ${response.status} (${lastReason}: ${lastErrorMessage})`);
+            break;
           }
-        } catch {
+        } catch (err: any) {
           clearTimeout(timeout);
+          responseTimeMs = Date.now() - startTime;
+          lastStatus = err?.name === "AbortError" ? 504 : 500;
+          lastReason = err?.name === "AbortError" ? "TIMEOUT" : "NETWORK_ERROR";
+          lastErrorMessage = err?.message || "Network exception";
         }
       }
+    } else {
+      lastStatus = 0;
+      lastReason = "API_KEY_UNCONFIGURED";
+      lastErrorMessage = "GEMINI_API_KEY environment variable is not configured.";
     }
 
+    // If Gemini succeeded, return genuine REAL Gemini AI response
     if (liveGeminiReply) {
       return NextResponse.json({
         reply: liveGeminiReply,
-        model: successfulModel,
+        source: "gemini",
         isLive: true,
+        model: successfulModel,
+        responseTimeMs,
         language: detectedLanguage,
       });
     }
 
-    // High-fidelity fallback using our intelligent farmer conversational engine
-    // Generates empathetic, accurate answers directly answering the farmer's question
-    // with ZERO developer error messages and ZERO technical notices.
-    const conversationalReply = generateIntelligentFarmerResponse({
+    // 2. PATH B: DATABASE FALLBACK
+    // Used ONLY when Gemini is unavailable or failed (e.g. 401, quota, or network).
+    // Answers farmer questions accurately using verified database records.
+    // Clearly identified as "database_fallback" (NEVER labeled as Gemini AI).
+    const fallbackReply = generateIntelligentFarmerResponse({
       message,
       context,
       language: detectedLanguage,
@@ -264,9 +339,17 @@ STRICT OPERATIONAL RULES:
     });
 
     return NextResponse.json({
-      reply: conversationalReply,
-      model: "krishidhenu-ai",
+      reply: fallbackReply,
+      source: "database_fallback",
       isLive: false,
+      model: "database-fallback",
+      responseTimeMs: responseTimeMs || (Date.now() - startTime),
+      geminiDiagnostics: {
+        httpStatus: lastStatus,
+        reason: lastReason,
+        errorMessage: lastErrorMessage,
+        modelAttempted: UNIQUE_MODELS[0] || "gemini-2.5-flash",
+      },
       language: detectedLanguage,
     });
   } catch (error: any) {

@@ -3,9 +3,14 @@
 import { useState, useRef, useEffect } from "react";
 import FarmerTopBar from "@/components/FarmerTopBar";
 import FarmerNav from "@/components/FarmerNav";
-import { Send, Sparkles, Bot } from "lucide-react";
+import { Send, Sparkles, Bot, Database } from "lucide-react";
 
-type Msg = { role: "user" | "assistant"; text: string };
+type Msg = {
+  role: "user" | "assistant";
+  text: string;
+  source?: "gemini" | "database_fallback";
+  model?: string;
+};
 
 const SUGGESTIONS = [
   "What is my token status?",
@@ -19,12 +24,15 @@ export default function AssistantPage() {
   const [messages, setMessages] = useState<Msg[]>([
     {
       role: "assistant",
-      text: "Hello! I am your KRISHIDHENU AI Assistant. How can I help you today with your token status, queue position, Mandi timings, crop MSP rates, or payment details? You can ask in English, हिंदी, or Hinglish.",
+      text: "Hello! I am your KRISHIDHENU Assistant. How can I help you today with your token status, queue position, Mandi timings, crop MSP rates, or payment details? You can ask in English, हिंदी, or Hinglish.",
+      source: "database_fallback",
+      model: "initial-welcome",
     },
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [isLive, setIsLive] = useState<boolean | null>(null);
+  const [lastSource, setLastSource] = useState<"gemini" | "database_fallback" | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
   // Check initial configuration on mount
@@ -57,8 +65,12 @@ export default function AssistantPage() {
         body: JSON.stringify({ message: userQuestion }),
       });
       const data = await res.json();
+
       if (typeof data?.isLive === "boolean") {
         setIsLive(data.isLive);
+      }
+      if (data?.source) {
+        setLastSource(data.source);
       }
 
       if (!res.ok) {
@@ -66,7 +78,8 @@ export default function AssistantPage() {
           ...m,
           {
             role: "assistant",
-            text: data.error || "Unable to reach the AI Assistant right now. Please try again.",
+            text: data.error || "Unable to reach the Assistant right now. Please try again.",
+            source: "database_fallback",
           },
         ]);
         return;
@@ -77,6 +90,8 @@ export default function AssistantPage() {
         {
           role: "assistant",
           text: data.reply || "I received your question. How else can I assist you with your Mandi procurement today?",
+          source: data.source || (data.isLive ? "gemini" : "database_fallback"),
+          model: data.model,
         },
       ]);
     } catch {
@@ -85,6 +100,7 @@ export default function AssistantPage() {
         {
           role: "assistant",
           text: "Connection failed. Please check your internet connection and try again.",
+          source: "database_fallback",
         },
       ]);
     } finally {
@@ -97,22 +113,22 @@ export default function AssistantPage() {
       <FarmerTopBar name="Farmer" title="AI Assistant" />
 
       <div className="max-w-lg mx-auto w-full px-4 py-3 flex-1 flex flex-col">
-        {/* Model & Status Badge Header */}
+        {/* Model & Source Status Header */}
         <div className="flex items-center justify-between px-3 py-1.5 bg-brand-50/70 border border-brand-200/60 rounded-lg mb-3 text-xs">
           <div className="flex items-center gap-1.5 text-brand-900 font-semibold">
             <Bot size={15} className="text-brand-600" />
-            <span>KRISHIDHENU AI Assistant</span>
+            <span>KRISHIDHENU Assistant</span>
           </div>
 
-          {isLive ? (
+          {lastSource === "gemini" || isLive === true ? (
             <div className="flex items-center gap-1.5 text-[11px] text-emerald-800 font-semibold bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
               <Sparkles size={12} className="text-emerald-600 animate-pulse" />
-              <span>Gemini AI Active</span>
+              <span>Gemini AI Connected</span>
             </div>
           ) : (
-            <div className="flex items-center gap-1.5 text-[11px] text-brand-700 font-medium bg-brand-50 px-2.5 py-0.5 rounded-full border border-brand-200">
-              <Sparkles size={12} className="text-brand-600" />
-              <span>AI Assistant Active</span>
+            <div className="flex items-center gap-1.5 text-[11px] text-amber-800 font-medium bg-amber-50 px-2.5 py-0.5 rounded-full border border-amber-200">
+              <Database size={12} className="text-amber-600" />
+              <span>Database Mode Active</span>
             </div>
           )}
         </div>
@@ -127,20 +143,37 @@ export default function AssistantPage() {
                 </span>
               )}
               <div
-                className={`max-w-[82%] rounded-xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-line ${
+                className={`max-w-[85%] rounded-xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-line ${
                   m.role === "user"
                     ? "bg-brand-600 text-white rounded-br-sm shadow-xs font-medium"
                     : "bg-white text-ink border border-line rounded-bl-sm shadow-xs"
                 }`}
               >
                 {m.text}
+
+                {/* Honest & Transparent Source Indicator */}
+                {m.role === "assistant" && (
+                  <div className="mt-2 pt-1.5 border-t border-slate-100 flex items-center justify-between text-[11px]">
+                    {m.source === "gemini" ? (
+                      <span className="inline-flex items-center gap-1 text-emerald-700 font-medium">
+                        <Sparkles size={11} className="text-emerald-600" />
+                        <span>Real Gemini AI ({m.model || "gemini-2.5-flash"})</span>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-amber-800 font-medium">
+                        <Database size={11} className="text-amber-600" />
+                        <span>Verified Database Records</span>
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           ))}
           {loading && (
             <div className="flex items-center gap-2 text-xs text-ink-faint pl-9">
               <span className="w-1.5 h-1.5 rounded-full bg-brand-600 animate-pulse-dot" />
-              <span>AI Assistant is thinking...</span>
+              <span>Assistant is retrieving response...</span>
             </div>
           )}
           <div ref={endRef} />
