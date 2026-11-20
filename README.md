@@ -7,7 +7,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 > **Platform:** KRISHIDHENU — Digital Farmer Procurement & Smart Mandi Management  
-> **Author:** Ayan Khan ([@ayankhanbebea-lgtm](https://github.com/ayankhanbebea-lgtm))  
+> **Repository:** [https://github.com/ayankhanbebea-lgtm/KRISHIDHENU](https://github.com/ayankhanbebea-lgtm/KRISHIDHENU)  
+> **Primary Production Deployment (Railway):** Continuous Stateful Container with Persistent Volume Storage (`/app/data/dev.db`)  
+> **Secondary Preview Deployment (Vercel):** [https://krishidhenu.vercel.app](https://krishidhenu.vercel.app)  
 > **Documentation:** [PROMPTS.md](./PROMPTS.md)
 
 ---
@@ -25,8 +27,53 @@ The platform eliminates physical bottleneck queues, reduces distress selling, gu
 - **Role-Based Dashboards:** Dedicated, high-performance interfaces tailored for **Farmers**, **Mandi Staff**, and **Platform Administrators**.
 - **MSP & Procurement Transparency:** Real-time Minimum Support Price rates, statutory moisture deduction tables, and quality grading standards.
 - **Payment & DBT Tracking:** Real-time visibility into electronic weighbridge slips, net payable calculations, bank detail submissions, and transaction reference (UTR) disbursements.
-- **AI-Powered Multilingual Farmer Assistant:** Context-grounded, zero-hallucination conversational assistant powered by Google Gemini (`gemini-2.5-flash`), operating in fluent Devanagari Hindi and English.
+- **AI-Powered Multilingual Farmer Assistant:** Context-grounded, zero-hallucination conversational assistant powered by Google Gemini (`gemini-2.5-flash`), operating in fluent Devanagari Hindi, Hinglish, and English.
 - **Secure Role-Based Access:** Enforced through middleware validation across `FARMER`, `STAFF`, and `ADMIN` operational roles.
+
+---
+
+## 🏗️ Deployment & Database Architecture
+
+KRISHIDHENU is engineered to run in dual environments:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                          KRISHIDHENU ARCHITECTURE                               │
+├───────────────────────────────────────┬─────────────────────────────────────────┤
+│    PRIMARY PRODUCTION (Railway)       │       SECONDARY PREVIEW (Vercel)        │
+│    Stateful Container Architecture    │       Stateless Edge Serverless         │
+├───────────────────────────────────────┼─────────────────────────────────────────┤
+│ • Continuous Node.js 22 Long-Running  │ • Ephemeral Edge Serverless Lambdas     │
+│   Process                             │ • Instant global edge delivery          │
+│ • Persistent Volume: /app/data        │ • Isolated /tmp sandbox database        │
+│ • Single Authoritative dev.db SQLite  │ • Full UI & API demonstration           │
+│ • Continuous EventSource / SSE Streams│ • Demo OTP authentication (123456)      │
+│ • True persistent operational storage │ • Standalone showcase deployment        │
+└───────────────────────────────────────┴─────────────────────────────────────────┘
+```
+
+### 🔍 Architectural Analysis: Why Dual SQLite Files Cannot Automatically Synchronize
+SQLite is a fast, ACID-compliant, zero-configuration **embedded file-based database**. Its storage engine writes directly to a physical file on the host filesystem via POSIX system calls.
+- **Railway** provides a stateful Linux container with a dedicated block volume attached at `/app/data`. The file `/app/data/dev.db` is durable, surviving restarts, redeployments, and scale events.
+- **Vercel** executes each route handler in isolated, stateless, and ephemeral serverless MicroVM containers. The local filesystem (`/tmp`) is isolated per container and recycled periodically.
+- Because SQLite has no network wire protocol or TCP listener, **two separate SQLite database files on Railway and Vercel cannot synchronize across cloud boundaries without an external distributed database system.**
+
+### 🏆 Selected Safe Architecture: Option A (Primary Production on Railway + Preview on Vercel)
+- **Primary Production Environment (Railway):**
+  - Serves as the authoritative production environment.
+  - Hosts the persistent `/app/data/dev.db` database.
+  - All operational farmer bookings, staff queue station actions, weighbridge entries, and DBT payments persist here permanently.
+- **Secondary Preview Environment (Vercel):**
+  - Live at [https://krishidhenu.vercel.app](https://krishidhenu.vercel.app).
+  - Operates as a resilient demonstration and preview platform.
+  - Features fixed demo OTP login (`123456`), live weather forecasts, and full interactive dashboard walkthroughs.
+
+### 🔄 Option B Migration Blueprint (Shared External Distributed Database)
+If a single unified database shared simultaneously across both Railway and Vercel is required in a future evolution, follow this verified migration roadmap:
+1. **Target Database:** Deploy a managed PostgreSQL instance (via Railway PostgreSQL, Neon, or Supabase) or Turso / LibSQL (cloud SQLite over HTTP/WebSocket).
+2. **Asynchronous Query Migration:** Convert synchronous `node:sqlite` calls (`db.prepare().all()`, `.run()`, `.get()`) into async query calls across the route handlers and services.
+3. **Connection Pooling:** Implement connection pooling via Prisma or `@neondatabase/serverless` to gracefully absorb concurrent serverless lambda invocations from Vercel.
+4. **Data Seed & Migration:** Execute `pg_dump` / SQL data transfer from `/app/data/dev.db` into the central cluster, configuring `DATABASE_URL` uniformly across both Railway and Vercel environments.
 
 ---
 
@@ -40,10 +87,11 @@ The platform eliminates physical bottleneck queues, reduces distress selling, gu
 - **DBT Bank Settlement:** Farmers track weighing slips, quality grades, deductions, and direct bank UTR transfers in real time.
 
 ### 🏢 Mandi Staff Experience
-- **Centre-Scoped Station Queue:** Staff at Sitapura, Sanganer, or Chaksu manage arrivals for their assigned centre.
+- **Centre-Scoped Station Queue:** Staff at Sitapura (`JPR01`), Sanganer (`JPR02`), or Chaksu (`JPR03`) manage arrivals for their assigned centre.
 - **State-Machine Enforcement:** Enforces strict sequential transitions:  
   `BOOKED` → `ARRIVED` → `VERIFIED` → `WEIGHING` → `PROCUREMENT_COMPLETED` → `PAYMENT_COMPLETED`.
 - **Electronic Weighing & Quality Entry:** Records actual weight in quintals, quality grade (Grade A / Grade B), and fair moisture deductions.
+- **Anti-Flicker & In-Flight Tracking:** Stable request sequencing (`latestReqIdRef`), SSE event bus, and automatic zero-stale background polling.
 
 ### 🏛️ Administrator Experience
 - **Statewide Mandi Analytics:** Live capacity utilization, throughput, and bottleneck detection across procurement centres.
@@ -52,55 +100,36 @@ The platform eliminates physical bottleneck queues, reduces distress selling, gu
 
 ---
 
-## 🛠️ Tech Stack & Architecture
+## 🛠️ Tech Stack
 
 - **Framework:** Next.js 14 App Router (React 18, Tailwind CSS)
-- **Database Engine:** Node 22 native `node:sqlite` (synchronous transactions, zero heavy ORM bloat)
-- **AI Model:** Google Gemini (`gemini-2.5-flash` via native Web `fetch` REST API; configurable via `GEMINI_MODEL`)
-- **Authentication:** Passwordless HMAC-SHA256 hashed OTPs, HTTP-only JWT sessions, and role-based route middleware.
-- **Multi-Language:** English & Hindi localization engine.
-- **Agrometeorological Feed:** Live weather forecasting via Open-Meteo.
+- **Database Engine:** Node 22 native `node:sqlite` (`DatabaseSync` with `PRAGMA journal_mode = DELETE` and `PRAGMA synchronous = FULL`)
+- **AI Model:** Google Gemini (`gemini-2.5-flash` with automatic fallback to `gemini-3.5-flash-lite`, `gemini-3.5-flash`, and `gemini-3.8-flash`)
+- **Authentication:** Passwordless HMAC-SHA256 hashed OTPs, HTTP-only JWT sessions, and role-based route middleware
+- **Localization:** Bilingual engine supporting English, Devanagari Hindi, and Romanized Hinglish
+- **Real-Time Engine:** Server-Sent Events (SSE) `/api/realtime/events` with adaptive 5-second polling fallback
+- **Weather Feed:** Live agricultural weather via Open-Meteo
 
 ---
 
-## 🤖 AI Assistant & Prompt Engineering Architecture
+## 📋 Verified Test Credentials
 
-KRISHIDHENU demonstrates systematic prompt engineering methodologies powering its conversational assistant:
-1. **Context-Aware Conversational Assistant:** Integrated with **Google Gemini Generative AI (`gemini-2.5-flash`)**, replacing static rule-based routines with a real-time LLM.
-2. **Zero-Hallucination Architecture:** The assistant queries the live SQLite database (`dev.db`) at runtime and directly injects verified farmer profiles, active tokens, live queue positions, wait time estimates, and DBT payment states into the LLM system prompt.
-3. **Bilingual Grounding:** Contextually detects English or Hindi/Hinglish and responds in simple, empathetic Devanagari Hindi or professional English tailored to rural agricultural contexts.
-4. **Prompt Engineering Documentation:** Full technical documentation in [`PROMPTS.md`](./PROMPTS.md) detailing the 5-part initiation prompt, 6 prompt engineering techniques, 3 before-and-after refinement case studies with evaluation metrics, and verified multi-tool contributions.
-
----
-
-## 📋 The Canonical 5-Part System Initiation Prompt
-
-The KRISHIDHENU platform was engineered using the canonical 5-part prompt framework:
-
-1. **Role:** Elite Full-Stack Principal Systems Architect, Indian Agritech Specialist, and Senior Prompt Engineer.
-2. **Task:** Design, implement, and verify "KRISHIDHENU": an automated, transparent, and bilingual (Hindi/English) MSP crop procurement and queue management system.
-3. **Context:** Indian farmers facing distress selling, physical Mandi bottlenecks, and arbitrary deductions; running on Next.js 14, Node 22 SQLite, and Google Gemini API.
-4. **Constraints:** 0% token hallucination (all dynamic claims strictly anchored to SQLite database), max 3 active tokens per farmer, bilingual Hindi/English fluency, offline fallback safety, passwordless HMAC OTP authentication.
-5. **Output Format:** Complete production Next.js code, typed TypeScript contracts, SQL schemas, automated test suites, and Markdown documentation.
-
-*(See full prompt details and before/after refinement examples in [`PROMPTS.md`](./PROMPTS.md).)*
-
----
-
-## 🤖 Multi-AI Tool Contribution Matrix
-
-| AI Tool | Lifecycle Stage | Primary Contribution | Key Artifacts |
+| Role | Mobile Number | Password / Demo OTP | Assigned Centre / Scope |
 | :--- | :--- | :--- | :--- |
-| **OpenAI ChatGPT** *(GPT-4o)* | System Foundation & Architecture | Domain decomposition, procurement state machine design, baseline Mandi data schemas | `prisma/schema.sql`, `lib/services.ts` |
-| **Anthropic Claude** *(Claude 3.5 Sonnet)* | Concurrency & Security Hardening | Concurrency audit, HMAC-SHA256 OTP hashing, transaction isolation, 3-active-token backend limits | `lib/auth.ts`, `lib/db.ts`, `scripts/regression-test.ts` |
-| **Google Gemini** *(Gemini 2.5 Flash)* | Conversational AI Engine | Runtime bilingual farmer assistant, zero-hallucination SQLite context injection, anti-hallucination prompt guardrails | `app/api/farmer/assistant/route.ts`, `app/farmer/assistant/page.tsx` |
+| **Administrator** | `9258879190` | `123456` | Statewide / All Mandi Centres |
+| **Mandi Staff (Sitapura)** | `9509082087` | `123456` | Jaipur Procurement Centre 01 (`JPR01`) |
+| **Mandi Staff (Sanganer)** | `7870844405` | `123456` | Jaipur Procurement Centre 02 (`JPR02`) |
+| **Mandi Staff (Chaksu)** | `7015962317` | `123456` | Jaipur Procurement Centre 03 (`JPR03`) |
+| **Farmer (Ramesh Kumar)** | `9829124370` | `123456` | Farmer Profile `FP-1000` |
+| **Farmer (Suman Devi)** | `9200000002` | `123456` | Farmer Profile `FP-1001` |
+| **Farmer (Kailash Chand)** | `9200000003` | `123456` | Farmer Profile `FP-1002` |
 
 ---
 
 ## ⚙️ Quick Start (Local Development)
 
 ### Prerequisites
-- Node.js 22.x LTS (required for native `node:sqlite`)
+- Node.js 22.x LTS (>= 22.5.0 required for native `node:sqlite`)
 - Git
 
 ### Installation
@@ -120,18 +149,18 @@ cp .env.example .env.local
 ```env
 NODE_ENV=development
 DATABASE_PATH=prisma/dev.db
-JWT_SECRET=your_super_secret_jwt_key_here
-OTP_SECRET=your_otp_salt_secret_here
+JWT_SECRET=replace_with_64_character_random_secret_string_here
+OTP_SECRET=replace_with_another_64_character_random_salt_string_here
 OTP_DEMO_MODE=true
 
-# Google Gemini API (Get key from https://aistudio.google.com/)
+# Google Gemini AI Assistant
 GEMINI_API_KEY=your_gemini_api_key_here
 GEMINI_MODEL=gemini-2.5-flash
 ```
 
 ### Run Locally
 ```bash
-# Start Next.js development server
+# Start development server
 npm run dev
 
 # Open in browser
@@ -142,45 +171,57 @@ http://localhost:3000
 
 ## 🧪 Automated Testing Suites
 
-KRISHIDHENU contains comprehensive automated test suites:
-
-### 1. Core Platform Regression Test (11/11 Suites Passed - 100% OK)
-Validates concurrency, 3-token limits, HMAC OTP authentication, database persistence, multi-language UI, and full procurement-to-payment lifecycle:
 ```bash
-npx tsx scripts/regression-test.ts
-```
+# 1. Mandatory Core Regression Suite (11/11 tests, 100% pass)
+npm run test:regression
 
-### 2. AI Assistant Verification Test (100% OK)
-Validates authenticated session enforcement, empty-question validation (400 Bad Request), SQLite context retrieval for active tokens/queue, bilingual English/Hindi query responses, and graceful offline fallback handling:
-```bash
-npx tsx scripts/test-ai-assistant.ts
-```
+# 2. Real-Time Booking Consistency & Queue Synchronization Suite (100% pass)
+npm run test:consistency
 
-### 3. Production Build Test
-Verifies that all 62 Next.js static and dynamic routes compile cleanly with zero TypeScript errors:
-```bash
+# 3. AI Assistant Language & Grounding Verification Suite (100% pass)
+npm run test:ai
+
+# 4. Production Build Verification
 npm run build
 ```
 
 ---
 
-## 🚢 Deployment
+## 🚢 Deployment Guide
 
-### 1. Railway (Recommended for Persistent SQLite)
-- Connect this GitHub repository (`KRISHIDHENU`) to [Railway](https://railway.app).
-- In Railway Service Settings, attach a **Persistent Volume** mounted at `/app/data`.
-- Set Environment Variables:
-  - `NIXPACKS_NODE_VERSION=22`
-  - `DATABASE_PATH=/app/data/dev.db`
-  - `JWT_SECRET=your_random_64_char_key`
-  - `OTP_SECRET=your_random_64_char_salt`
-  - `OTP_DEMO_MODE=true`
-  - `GEMINI_API_KEY=your_gemini_api_key`
-  - `GEMINI_MODEL=gemini-2.5-flash`
+### 1. Railway Deployment (Primary Production)
 
-### 2. Vercel Deployment
-- Deploy directly to [Vercel](https://vercel.com).
-- Note: Vercel serverless functions run on ephemeral micro-VM filesystems (`/tmp`). For a production Vercel deployment with multi-region persistence, connect Turso / LibSQL or a cloud Postgres instance via `DATABASE_URL`.
+1. Connect the GitHub repository [`https://github.com/ayankhanbebea-lgtm/KRISHIDHENU`](https://github.com/ayankhanbebea-lgtm/KRISHIDHENU) on [Railway](https://railway.app).
+2. Attach a **Persistent Volume** in the Railway service settings:
+   - Mount Path: `/app/data`
+3. Configure Service Environment Variables:
+   ```env
+   NODE_ENV=production
+   NIXPACKS_NODE_VERSION=22
+   DATABASE_PATH=/app/data/dev.db
+   JWT_SECRET=your_64_character_production_jwt_secret
+   OTP_SECRET=your_64_character_production_otp_secret
+   OTP_DEMO_MODE=true
+   GEMINI_API_KEY=your_google_gemini_api_key
+   GEMINI_MODEL=gemini-2.5-flash
+   ```
+4. Build & Start Commands (handled automatically via [`nixpacks.toml`](./nixpacks.toml)):
+   - **Build Command:** `npm run build`
+   - **Start Command:** `npm run start`
+   - *Note: Railway dynamically injects `PORT`. Next.js automatically listens on `process.env.PORT`.*
+
+### 2. Vercel Deployment (Secondary Preview)
+
+1. Import the repository on [Vercel](https://vercel.com).
+2. Configure Environment Variables in Vercel Project Settings:
+   - `NODE_ENV=production`
+   - `DATABASE_PATH=/tmp/dev.db`
+   - `JWT_SECRET=your_jwt_secret`
+   - `OTP_SECRET=your_otp_secret`
+   - `OTP_DEMO_MODE=true`
+   - `GEMINI_API_KEY=your_google_gemini_api_key`
+   - `GEMINI_MODEL=gemini-2.5-flash`
+3. Deploy directly. The preview site is live at: [https://krishidhenu.vercel.app](https://krishidhenu.vercel.app).
 
 ---
 

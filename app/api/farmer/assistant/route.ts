@@ -10,8 +10,9 @@ export const dynamic = "force-dynamic";
 // Active Gemini models in priority order with resilient fallback
 // gemini-3.5-flash-lite provides sub-second response times and highest availability
 const CANDIDATE_MODELS = [
-  "gemini-3.5-flash-lite",
   process.env.GEMINI_MODEL,
+  "gemini-2.5-flash",
+  "gemini-3.5-flash-lite",
   "gemini-3.5-flash",
   "gemini-3.8-flash",
 ].filter((m): m is string => Boolean(m && m.trim()));
