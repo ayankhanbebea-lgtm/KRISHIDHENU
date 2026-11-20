@@ -37,7 +37,6 @@ export async function GET(req: NextRequest) {
     const m = String(d.getMonth() + 1).padStart(2, "0");
     const dt = String(d.getDate()).padStart(2, "0");
     const dStr = `${y}-${m}-${dt}`;
-    await ensureSlotsForDate(dStr);
 
     validDates.push({
       date: dStr,
