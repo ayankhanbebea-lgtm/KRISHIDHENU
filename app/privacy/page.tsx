@@ -44,7 +44,7 @@ export default function PrivacyPage() {
               KRISHIDHENU collects the following information to facilitate procurement services: your name, Aadhaar-linked mobile number, land/crop declaration details, and bank account information for MSP payment processing.
             </p>
             <p>
-              This data is used solely to enable slot booking, queue management, and payment tracking, and is shared only with authorized Department of Consumer Affairs (DoCA) systems for procurement and PFMS payment verification.
+              This data is used solely to enable slot booking, queue management, and payment tracking, and is shared only with authorized procurement centre systems and payment verification channels.
             </p>
             <p>
               Your data is not sold or shared with third parties for commercial purposes.
@@ -70,8 +70,8 @@ export default function PrivacyPage() {
             </div>
             <div className="p-4 rounded-lg bg-surface-sunken/60 border border-line/40">
               <KeyRound className="text-brand-600 mb-2" size={20} />
-              <h3 className="font-semibold text-ink text-sm mb-1">Government Verified</h3>
-              <p className="text-xs text-ink-faint">Shared strictly for official DoCA &amp; PFMS processing.</p>
+              <h3 className="font-semibold text-ink text-sm mb-1">Authorized Access Only</h3>
+              <p className="text-xs text-ink-faint">Shared strictly for verified procurement and payment processing.</p>
             </div>
           </div>
         </div>

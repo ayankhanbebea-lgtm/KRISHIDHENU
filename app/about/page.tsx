@@ -40,7 +40,7 @@ export default function AboutPage() {
               KRISHIDHENU is a digital procurement platform built for farmers to register, book procurement slots, and track real-time queue status at government purchase centres.
             </p>
             <p className="text-ink-soft text-base">
-              Developed as a solution under the Smart India Hackathon 2026 for the Ministry of Consumer Affairs, Food &amp; Public Distribution (Department of Consumer Affairs), KRISHIDHENU eliminates long waiting times and uncertainty around procurement and payment status by giving farmers a transparent, self-service digital interface — accessible via web, app, and SMS.
+              KRISHIDHENU eliminates long waiting times and uncertainty around procurement and payment status by giving farmers a transparent, self-service digital interface — accessible via web, app, and SMS. The platform coordinates digital farmer registration, token generation, Mandi capacity management, and direct benefit transfer (DBT) payment tracking.
             </p>
           </div>
 
@@ -52,8 +52,8 @@ export default function AboutPage() {
             </div>
             <div className="p-4 rounded-lg bg-surface-sunken/60 border border-line/40">
               <Building2 className="text-brand-600 mb-2" size={20} />
-              <h3 className="font-semibold text-ink text-sm mb-1">DoCA Alignment</h3>
-              <p className="text-xs text-ink-faint">Integrated with procurement centres and PFMS payment flows.</p>
+              <h3 className="font-semibold text-ink text-sm mb-1">Mandi Operations</h3>
+              <p className="text-xs text-ink-faint">Standardized workflows for procurement centres and electronic settlement.</p>
             </div>
             <div className="p-4 rounded-lg bg-surface-sunken/60 border border-line/40">
               <CheckCircle2 className="text-brand-600 mb-2" size={20} />

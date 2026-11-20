@@ -28,7 +28,7 @@ const faqs = [
   {
     icon: CreditCard,
     question: "When will I get my payment?",
-    answer: 'Payment status (initiated/processing/credited) is tracked under "Procurement Status" and updates automatically once DoCA processes it.',
+    answer: 'Payment status (initiated/processing/credited) is tracked under "Procurement Status" and updates automatically once payment processing is completed.',
   },
 ];
 

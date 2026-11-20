@@ -47,7 +47,7 @@ export default function TermsPage() {
               Slot bookings are subject to procurement centre capacity and may be rescheduled by the centre in case of unforeseen circumstances.
             </p>
             <p>
-              KRISHIDHENU is a facilitation platform; final procurement decisions, quality grading, and payment disbursal remain the responsibility of the Department of Consumer Affairs and designated procurement centre officers.
+              KRISHIDHENU is a digital management and facilitation platform; final procurement decisions, quality grading, and payment disbursal remain the responsibility of designated procurement centre officers and authorized authorities.
             </p>
             <p>
               Misuse of the platform, including fraudulent registration or false crop declarations, may result in account suspension and reporting to relevant authorities.

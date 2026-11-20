@@ -1,6 +1,7 @@
 {
   "name": "smart-procurement",
   "version": "0.1.0",
+  "description": "KRISHIDHENU — A Digital Farmer Procurement & Smart Mandi Management Platform",
   "private": true,
   "scripts": {
     "dev": "next dev",

@@ -189,7 +189,7 @@ STRICT RULES & CONSTRAINTS:
       const errData = await response.json().catch(() => ({}));
       console.error("[Gemini API Error]", response.status, errData);
 
-      // Helpful descriptive error for developer / student
+      // Helpful descriptive error in case of API failure
       return NextResponse.json(
         {
           reply: `AI Assistant is temporarily unable to connect to Gemini API (Status ${response.status}: ${errData?.error?.message || "Service unavailable"}). Your current token is ${context.activeBooking?.token || "N/A"}.`,

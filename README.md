@@ -1,4 +1,4 @@
-# KRISHIDHENU — Digital Queue & Transparent MSP Procurement Platform
+# KRISHIDHENU — A Digital Farmer Procurement & Smart Mandi Management Platform
 
 [![Next.js](https://img.shields.io/badge/Next.js-14.2-black?logo=next.js)](https://nextjs.org/)
 [![Google Gemini](https://img.shields.io/badge/AI-Google%20Gemini%202.5%20Flash-4285F4?logo=google)](https://aistudio.google.com/)
@@ -6,26 +6,27 @@
 [![SQLite](https://img.shields.io/badge/Database-SQLite%20(node%3Asqlite)-003B57?logo=sqlite)](https://nodejs.org/api/sqlite.html)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-> **Original Hackathon:** Smart India Hackathon (SIH 2026) | Problem Statement 26032  
-> **Academic Project:** Prompt Engineering Final Project  
+> **Platform:** KRISHIDHENU — Digital Farmer Procurement & Smart Mandi Management  
 > **Author:** Ayan Khan ([@ayankhanbebea-lgtm](https://github.com/ayankhanbebea-lgtm))  
-> **Full Prompt Engineering Documentation:** [PROMPTS.md](./PROMPTS.md)
+> **Documentation:** [PROMPTS.md](./PROMPTS.md)
 
 ---
 
 ## 🌾 Overview
 
-**KRISHIDHENU** is an automated, transparent, and bilingual (Hindi & English) digital queue and Minimum Support Price (MSP) grain procurement platform built for Indian farmers, Mandi procurement centre staff, and government administrators.
+**KRISHIDHENU** is an automated, transparent, and bilingual (Hindi & English) digital farmer procurement and smart Mandi management platform. It streamlines agricultural grain procurement at Minimum Support Price (MSP) by connecting farmers, procurement centre staff, and administrators into an integrated, paperless workflow.
 
-The project solves long physical waiting queues, distress selling, arbitrary deductions, and payment opacity at agricultural Mandis.
+The platform eliminates physical bottleneck queues, reduces distress selling, guarantees transparent weighing and quality grading, and provides end-to-end visibility into direct benefit transfer (DBT) payments.
 
-### 🤖 Prompt Engineering Final Project Evolution
-
-Originally developed as a functional prototype for Smart India Hackathon (SIH 2026), KRISHIDHENU has been upgraded to demonstrate advanced **Prompt Engineering** techniques:
-1. **Context-Aware Conversational Assistant:** Integrated with **Google Gemini Generative AI (`gemini-2.5-flash`)**, replacing static rule-based routines with a real-time LLM.
-2. **Zero-Hallucination Architecture:** The assistant queries the live SQLite database (`dev.db`) at runtime and directly injects verified farmer profiles, active tokens, live queue positions, wait time estimates, and DBT payment states into the LLM system prompt.
-3. **Bilingual Grounding:** Contextually detects English or Hindi/Hinglish and responds in simple, empathetic Devanagari Hindi or professional English tailored to rural agricultural contexts.
-4. **Prompt Engineering Documentation:** Full repository documentation in [`PROMPTS.md`](./PROMPTS.md) demonstrating the 5-part initiation prompt, 6 prompt techniques, 3 before-and-after refinement case studies with evaluation metrics, and verified contributions from **ChatGPT**, **Claude**, and **Gemini**.
+### 🌟 Core Capabilities
+- **Digital Farmer Registration & Authentication:** Fast, passwordless onboarding using HMAC-SHA256 hashed OTPs and secure HTTP-only sessions.
+- **Transparent Procurement Token & Queue Management:** Guaranteed unique cryptographic token generation with FIFO scheduling and a strict 3-active-token limit.
+- **Real-Time Procurement Centre Updates:** Live centre capacity monitoring, queue progression rails, and wait-time estimations.
+- **Role-Based Dashboards:** Dedicated, high-performance interfaces tailored for **Farmers**, **Mandi Staff**, and **Platform Administrators**.
+- **MSP & Procurement Transparency:** Real-time Minimum Support Price rates, statutory moisture deduction tables, and quality grading standards.
+- **Payment & DBT Tracking:** Real-time visibility into electronic weighbridge slips, net payable calculations, bank detail submissions, and transaction reference (UTR) disbursements.
+- **AI-Powered Multilingual Farmer Assistant:** Context-grounded, zero-hallucination conversational assistant powered by Google Gemini (`gemini-2.5-flash`), operating in fluent Devanagari Hindi and English.
+- **Secure Role-Based Access:** Enforced through middleware validation across `FARMER`, `STAFF`, and `ADMIN` operational roles.
 
 ---
 
@@ -35,7 +36,7 @@ Originally developed as a functional prototype for Smart India Hackathon (SIH 20
 - **Guided 6-Step Booking:** Crop → Quantity/Land → Centre → Date → Slot → Review & Confirm.
 - **Dynamic Token Flow:** Guaranteed unique cryptographic token generation (e.g. `WHT-0105`, `BAJ-0121`).
 - **Real-Time Queue Rail:** Visual progress tracking from "Now Serving" to the farmer's grain-marked token with live estimated wait times.
-- **AI Sahayak (Chatbot):** Direct bottom-bar and dashboard access to an empathetic, bilingual assistant answering questions regarding token status, queue position, fair moisture deductions, and required documents.
+- **AI Sahayak (Multilingual Assistant):** Direct bottom-bar and dashboard access to an empathetic, bilingual assistant answering questions regarding token status, queue position, fair moisture deductions, and required documents.
 - **DBT Bank Settlement:** Farmers track weighing slips, quality grades, deductions, and direct bank UTR transfers in real time.
 
 ### 🏢 Mandi Staff Experience
@@ -44,7 +45,7 @@ Originally developed as a functional prototype for Smart India Hackathon (SIH 20
   `BOOKED` → `ARRIVED` → `VERIFIED` → `WEIGHING` → `PROCUREMENT_COMPLETED` → `PAYMENT_COMPLETED`.
 - **Electronic Weighing & Quality Entry:** Records actual weight in quintals, quality grade (Grade A / Grade B), and fair moisture deductions.
 
-### 🏛️ Government Admin Experience
+### 🏛️ Administrator Experience
 - **Statewide Mandi Analytics:** Live capacity utilization, throughput, and bottleneck detection across procurement centres.
 - **Congestion Detector:** Automatically flags high-congestion centres (`Normal`, `Busy`, `High Load`) to balance farmer influx.
 - **Audit & Financial Logs:** Tracks state treasury disbursements, bank submissions, and payment references.
@@ -62,15 +63,25 @@ Originally developed as a functional prototype for Smart India Hackathon (SIH 20
 
 ---
 
-## 📋 The Canonical 5-Part Project Initiation Prompt
+## 🤖 AI Assistant & Prompt Engineering Architecture
+
+KRISHIDHENU demonstrates systematic prompt engineering methodologies powering its conversational assistant:
+1. **Context-Aware Conversational Assistant:** Integrated with **Google Gemini Generative AI (`gemini-2.5-flash`)**, replacing static rule-based routines with a real-time LLM.
+2. **Zero-Hallucination Architecture:** The assistant queries the live SQLite database (`dev.db`) at runtime and directly injects verified farmer profiles, active tokens, live queue positions, wait time estimates, and DBT payment states into the LLM system prompt.
+3. **Bilingual Grounding:** Contextually detects English or Hindi/Hinglish and responds in simple, empathetic Devanagari Hindi or professional English tailored to rural agricultural contexts.
+4. **Prompt Engineering Documentation:** Full technical documentation in [`PROMPTS.md`](./PROMPTS.md) detailing the 5-part initiation prompt, 6 prompt engineering techniques, 3 before-and-after refinement case studies with evaluation metrics, and verified multi-tool contributions.
+
+---
+
+## 📋 The Canonical 5-Part System Initiation Prompt
 
 The KRISHIDHENU platform was engineered using the canonical 5-part prompt framework:
 
 1. **Role:** Elite Full-Stack Principal Systems Architect, Indian Agritech Specialist, and Senior Prompt Engineer.
-2. **Task:** Design, implement, and verify "KRISHIDHENU": an automated, transparent, and bilingual (Hindi/English) government MSP crop procurement and queue management system.
+2. **Task:** Design, implement, and verify "KRISHIDHENU": an automated, transparent, and bilingual (Hindi/English) MSP crop procurement and queue management system.
 3. **Context:** Indian farmers facing distress selling, physical Mandi bottlenecks, and arbitrary deductions; running on Next.js 14, Node 22 SQLite, and Google Gemini API.
 4. **Constraints:** 0% token hallucination (all dynamic claims strictly anchored to SQLite database), max 3 active tokens per farmer, bilingual Hindi/English fluency, offline fallback safety, passwordless HMAC OTP authentication.
-5. **Output Format:** Complete production Next.js code, typed TypeScript contracts, SQL schemas, automated test suites, and Markdown logs.
+5. **Output Format:** Complete production Next.js code, typed TypeScript contracts, SQL schemas, automated test suites, and Markdown documentation.
 
 *(See full prompt details and before/after refinement examples in [`PROMPTS.md`](./PROMPTS.md).)*
 
@@ -78,11 +89,11 @@ The KRISHIDHENU platform was engineered using the canonical 5-part prompt framew
 
 ## 🤖 Multi-AI Tool Contribution Matrix
 
-| AI Tool | Epoch | Primary Contribution | Key Artifacts |
+| AI Tool | Lifecycle Stage | Primary Contribution | Key Artifacts |
 | :--- | :--- | :--- | :--- |
-| **OpenAI ChatGPT** *(GPT-4o)* | SIH 2026 Foundation | Problem statement decomposition, procurement state machine design, baseline Mandi data schemas | `prisma/schema.sql`, `lib/services.ts` |
-| **Anthropic Claude** *(Claude 3.5 Sonnet)* | SIH Refinement | Concurrency audit, HMAC-SHA256 OTP hashing, transaction isolation, 3-active-token backend limits | `lib/auth.ts`, `lib/db.ts`, `scripts/regression-test.ts` |
-| **Google Gemini** *(Gemini 2.5 Flash)* | Prompt Engineering Coursework | Runtime bilingual farmer assistant, zero-hallucination SQLite context injection, anti-hallucination prompt guardrails | `app/api/farmer/assistant/route.ts`, `app/farmer/assistant/page.tsx` |
+| **OpenAI ChatGPT** *(GPT-4o)* | System Foundation & Architecture | Domain decomposition, procurement state machine design, baseline Mandi data schemas | `prisma/schema.sql`, `lib/services.ts` |
+| **Anthropic Claude** *(Claude 3.5 Sonnet)* | Concurrency & Security Hardening | Concurrency audit, HMAC-SHA256 OTP hashing, transaction isolation, 3-active-token backend limits | `lib/auth.ts`, `lib/db.ts`, `scripts/regression-test.ts` |
+| **Google Gemini** *(Gemini 2.5 Flash)* | Conversational AI Engine | Runtime bilingual farmer assistant, zero-hallucination SQLite context injection, anti-hallucination prompt guardrails | `app/api/farmer/assistant/route.ts`, `app/farmer/assistant/page.tsx` |
 
 ---
 
@@ -113,7 +124,7 @@ JWT_SECRET=your_super_secret_jwt_key_here
 OTP_SECRET=your_otp_salt_secret_here
 OTP_DEMO_MODE=true
 
-# Google Gemini API (Get free key from https://aistudio.google.com/)
+# Google Gemini API (Get key from https://aistudio.google.com/)
 GEMINI_API_KEY=your_gemini_api_key_here
 GEMINI_MODEL=gemini-2.5-flash
 ```
@@ -131,9 +142,9 @@ http://localhost:3000
 
 ## 🧪 Automated Testing Suites
 
-KRISHIDHENU contains two comprehensive automated test suites:
+KRISHIDHENU contains comprehensive automated test suites:
 
-### 1. SIH Core Regression Test (11/11 Suites Passed - 100% OK)
+### 1. Core Platform Regression Test (11/11 Suites Passed - 100% OK)
 Validates concurrency, 3-token limits, HMAC OTP authentication, database persistence, multi-language UI, and full procurement-to-payment lifecycle:
 ```bash
 npx tsx scripts/regression-test.ts
@@ -156,8 +167,7 @@ npm run build
 ## 🚢 Deployment
 
 ### 1. Railway (Recommended for Persistent SQLite)
-- Create a new project on [Railway.app](https://railway.app).
-- Connect this GitHub repository (`KRISHIDHENU`).
+- Connect this GitHub repository (`KRISHIDHENU`) to [Railway](https://railway.app).
 - In Railway Service Settings, attach a **Persistent Volume** mounted at `/app/data`.
 - Set Environment Variables:
   - `NIXPACKS_NODE_VERSION=22`

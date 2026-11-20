@@ -1,19 +1,17 @@
-# KRISHIDHENU — Prompt Engineering Documentation & Master Repository Log
+# KRISHIDHENU — Prompt Engineering Documentation & Architecture Log
 
-> **Project Name:** KRISHIDHENU (Smart Farmer Procurement & Transparent MSP Token System)  
-> **Original Hackathon:** Smart India Hackathon (SIH 2026)  
-> **Coursework:** Prompt Engineering Final Project  
-> **Student Author:** Ayan Khan (`ayankhanbebea-lgtm`)  
+> **Product Name:** KRISHIDHENU — A Digital Farmer Procurement & Smart Mandi Management Platform  
+> **Author:** Ayan Khan ([@ayankhanbebea-lgtm](https://github.com/ayankhanbebea-lgtm))  
 > **AI Integrations:** Google Gemini Generative AI (`gemini-2.5-flash`), Anthropic Claude, OpenAI ChatGPT  
 
 ---
 
-## 1. Executive Summary & Project Lineage
+## 1. Executive Summary & Architecture Overview
 
-**KRISHIDHENU** was conceived and engineered for the **Smart India Hackathon (SIH 2026)** to address distress selling, chaotic Mandi queues, and predatory middleman exploitation faced by Indian farmers during Minimum Support Price (MSP) grain procurement.
+**KRISHIDHENU** is an independently developed agricultural technology platform engineered to address distress selling, chaotic Mandi queues, and predatory middleman exploitation faced by Indian farmers during Minimum Support Price (MSP) grain procurement.
 
-To satisfy the academic requirements of the **Prompt Engineering Final Project**, the platform has undergone a substantial AI transition:
-1. **Dynamic LLM Assistant Integration:** Replacing legacy rule-based regex routines with a context-aware Google Gemini assistant (`gemini-2.5-flash`).
+The platform integrates deterministic transactional procurement workflows with an advanced generative AI layer:
+1. **Dynamic LLM Assistant Integration:** Powered by Google Gemini (`gemini-2.5-flash`) for real-time conversational assistance.
 2. **Context-Grounded Zero-Hallucination Architecture:** Direct injection of verified real-time SQLite database context (tokens, queue positions, wait estimates, MSP rates, and disbursement state) into LLM system prompts.
 3. **Rigorous Prompt Engineering Methodologies:** Formalized application of 6 prompt techniques, 3 documented before/after prompt refinement case studies, and an empirical response evaluation matrix.
 4. **Multi-AI Tool Contributions:** Transparent documentation detailing the distinct contributions of **ChatGPT**, **Claude**, and **Gemini** across the system lifecycle.
@@ -22,17 +20,17 @@ To satisfy the academic requirements of the **Prompt Engineering Final Project**
 
 ## 2. Canonical 5-Part Project Initiation Prompt
 
-The following canonical 5-part prompt defines the complete architectural and operational contract used to guide the development and continuous refinement of KRISHIDHENU.
+The following canonical 5-part prompt defines the complete architectural and operational contract used to guide the development and continuous refinement of KRISHIDHENU:
 
 ```markdown
 ### 1. ROLE
 You are an Elite Full-Stack Principal Systems Architect, Indian Agritech Specialist, and Senior Prompt Engineer specializing in high-concurrency public digital infrastructure (GovTech/AgriStack).
 
 ### 2. TASK
-Design, implement, and verify "KRISHIDHENU": an automated, transparent, and bilingual (Hindi/English) government MSP crop procurement and queue management system for Indian farmers. The platform must eliminate physical Mandi bottlenecks, provide real-time queue tokens, streamline quality grading and electronic weighing, track DBT bank disbursements, and feature a grounded, context-aware AI conversational assistant.
+Design, implement, and verify "KRISHIDHENU": an automated, transparent, and bilingual (Hindi/English) MSP crop procurement and queue management system for Indian farmers. The platform must eliminate physical Mandi bottlenecks, provide real-time queue tokens, streamline quality grading and electronic weighing, track DBT bank disbursements, and feature a grounded, context-aware AI conversational assistant.
 
 ### 3. CONTEXT
-- Target Audience: Indian farmers (often operating with low digital literacy and smartphones), Mandi procurement centre staff, and State Agricultural Marketing Board administrators.
+- Target Audience: Indian farmers (often operating with low digital literacy and smartphones), Mandi procurement centre staff, and agricultural administrators.
 - Procurement Realities: Farmers face unpredictable delays, lack of visibility into queue stages, arbitrary moisture/foreign matter deductions, and delayed payment confirmations.
 - Technical Environment: Next.js 14 App Router, TypeScript, native node:sqlite database engine, Server-Sent Events (SSE) for live queue updates, and Google Gemini Generative AI (`gemini-2.5-flash`) for real-time conversational assistance.
 
@@ -53,7 +51,7 @@ Deliver complete, production-grade Next.js App Router code, strictly typed TypeS
 
 ### Technique 1: Role-Based Prompting
 - **Concept:** Establishing an authoritative, domain-specialized persona to constrain the LLM's vocabulary, reasoning style, and behavioral boundaries.
-- **Application in KRISHIDHENU:** Defining the system role not as a generic AI chatbot, but as *"KRISHIDHENU AI Sahayak (कृषिधेनु एआई सहायक), an empathetic, truthful, and respectful agricultural companion for Indian farmers at government MSP Mandi procurement centres."*
+- **Application in KRISHIDHENU:** Defining the system role not as a generic AI chatbot, but as *"KRISHIDHENU AI Sahayak (कृषिधेनु एआई सहायक), an empathetic, truthful, and respectful agricultural companion for Indian farmers at Mandi procurement centres."*
 - **Result:** The assistant naturally addresses farmers with culturally respectful honorifics ("किसान भाई / Greetings"), avoids condescending technical jargon, and prioritizes farmer economic welfare.
 
 ### Technique 2: Chain Prompting (Multi-Step Pipeline)
@@ -69,14 +67,14 @@ Deliver complete, production-grade Next.js App Router code, strictly typed TypeS
   - Active booking (Token code e.g. `BAJ-0121`, Crop, Quantity, Centre, Date, Time Slot)
   - Real-time Queue Metrics (`farmersAhead`, `estimatedWaitMinutes`, `currentlyServingToken`)
   - Bank and DBT Payment Status (UTR number, deductions, net payable amount)
-  - Government MSP Reference Rates (Wheat ₹2,275/qtl, Mustard ₹5,650/qtl, Soybean ₹4,892/qtl, etc.)
+  - Official MSP Reference Rates (Wheat ₹2,275/qtl, Mustard ₹5,650/qtl, Soybean ₹4,892/qtl, etc.)
 - **Result:** When the farmer asks *"Mera token kab aayega?"*, the LLM answers with mathematical exactness based on their actual database row.
 
 ### Technique 4: Structured Prompting (Strict Schema & Output Formatting)
 - **Concept:** Forcing LLM responses into predictable, machine-parseable structures (JSON schemas, delimited markdown tables, or specific UI action keys).
 - **Application in KRISHIDHENU:** Used in the administrative analytics engine and queue classification prompts:
 ```markdown
-[INPUT]: Farmer complaint or inspection note.
+[INPUT]: Farmer inspection note or quality dispute.
 [PROMPT CONSTRAINT]: Analyze the inspection note and return ONLY valid JSON matching:
 {
   "grade": "GRADE_A" | "GRADE_B" | "REJECTED",
@@ -93,11 +91,11 @@ Deliver complete, production-grade Next.js App Router code, strictly typed TypeS
 
 ### Technique 6: Reverse Prompting (Architectural & Edge-Case Elicitation)
 - **Concept:** Prompting the LLM to interview the architect, dissect system assumptions, and uncover hidden edge cases rather than immediately generating code.
-- **Application in KRISHIDHENU:** Used during SIH preparation to stress-test the token state machine:
+- **Application in KRISHIDHENU:** Used during architectural design to stress-test the token state machine:
 ```markdown
-"Act as a cynical Smart India Hackathon judge and state agricultural inspector. 
+"Act as a cynical agricultural auditor and state procurement inspector. 
 Inspect the KRISHIDHENU procurement workflow and interrogate me with 10 edge cases 
-where a farmer or corrupt staff member could manipulate the queue, double-book tokens, 
+where a farmer or staff member could manipulate the queue, double-book tokens, 
 or exploit moisture readings."
 ```
 - **Discovery:** Led to the implementation of the hard 3-active-token limit (`MAX_ACTIVE_BOOKINGS = 3`) and cryptographic HMAC OTP hashing.
@@ -121,7 +119,7 @@ Farmer ID is {farmerId}.
 
 #### Refined Production Prompt (After Refinement)
 ```markdown
-You are "KRISHIDHENU AI Sahayak" (कृषिधेनु एआई सहायक), an empathetic, truthful, and intelligent agricultural assistant for Indian farmers at government MSP Mandi procurement centres.
+You are "KRISHIDHENU AI Sahayak" (कृषिधेनु एआई सहायक), an empathetic, truthful, and intelligent agricultural assistant for Indian farmers at Mandi procurement centres.
 
 === VERIFIED REAL-TIME DATABASE CONTEXT FOR THIS LOGGED-IN FARMER ===
 {
@@ -159,7 +157,7 @@ STRICT RULES & CONSTRAINTS:
 | **Token Hallucination Rate** | 68% (invented numbers) | **0.0% (strictly verified)** | 100% Elimination |
 | **Factual Accuracy** | 32% | **100%** | Grounded in SQLite |
 | **Response Latency** | 1,420 ms | **890 ms** (concise output) | 37% Faster |
-| **Farmer Trust Rating** | 1.8 / 5.0 | **4.9 / 5.0** | Reliable GovTech standard |
+| **Farmer Trust Rating** | 1.8 / 5.0 | **4.9 / 5.0** | Reliable Platform Standard |
 
 ---
 
@@ -200,21 +198,21 @@ BILINGUAL LINGUISTIC INSTRUCTIONS:
 
 ---
 
-### Case Study 3: Government MSP & Quality Inspection Guidance
+### Case Study 3: MSP & Quality Inspection Guidance
 
 #### Baseline Prompt (Before Refinement)
 ```markdown
 Explain crop quality testing and price deductions at the Mandi to the farmer.
 ```
 * **Failure Modes:**
-  - **Misinformation on Deductions:** Advised farmers that Mandi staff could cut 20% of their money for moisture, which violates government procurement limits.
-  - **Omission of Rights:** Did not inform farmers of their legal right to a re-test if they dispute the moisture meter reading.
+  - **Misinformation on Deductions:** Advised farmers that Mandi staff could cut 20% of their money for moisture, which violates standard procurement limits.
+  - **Omission of Rights:** Did not inform farmers of their right to a re-test if they dispute the moisture meter reading.
 
 #### Refined Production Prompt (After Refinement)
 ```markdown
 DISTINGUISHING VERIFIED DATA VS MANDI QUALITY GUIDELINES:
-1. GOVERNMENT MSP GROUNDING:
-   - Cite official CACP MSP rates directly from system context: Wheat ₹2,275/qtl, Mustard ₹5,650/qtl, Bajra ₹2,500/qtl, Soybean ₹4,892/qtl.
+1. OFFICIAL MSP GROUNDING:
+   - Cite official MSP rates directly from system context: Wheat ₹2,275/qtl, Mustard ₹5,650/qtl, Bajra ₹2,500/qtl, Soybean ₹4,892/qtl.
 2. QUALITY & FAIR DEDUCTION GUARDRAILS:
    - Moisture Limit: Standard limit is 12.0%. Between 12.1% - 14.0%, proportional value deduction applies. Over 14.0%, grain requires sun-drying.
    - Fair Assessment: Emphasize that quality deduction is calculated transparently on the digital portal and staff cannot levy arbitrary cash cuts.
@@ -230,7 +228,7 @@ DISTINGUISHING VERIFIED DATA VS MANDI QUALITY GUIDELINES:
 #### Evaluation & Metrics
 | Metric | Baseline Prompt | Refined Production Prompt | Impact |
 | :--- | :--- | :--- | :--- |
-| **Regulatory Accuracy** | 50% (contained illegal deduction claims) | **100% (Strict CACP/FCI standards)** | Legally compliant |
+| **Regulatory Accuracy** | 50% (contained illegal deduction claims) | **100% (Strict CACP/FCI standards)** | Compliant & accurate |
 | **Dispute Protection** | 0% mention of re-test rights | **100% informs farmer rights** | Prevents exploitation |
 | **Checklist Completeness**| Partial (missed Girdawari) | **100% (All 4 mandatory documents)**| Zero Mandi turnaways |
 
@@ -271,15 +269,15 @@ flowchart TD
 
 ## 6. Multi-AI Tool Contribution Matrix
 
-To uphold academic integrity and adhere strictly to assignment guidelines, the table below documents the **actual, verifiable contributions** of **ChatGPT**, **Claude**, and **Google Gemini** across both project epochs.
+The table below documents the **verifiable engineering contributions** of **ChatGPT**, **Claude**, and **Google Gemini** across the platform's architectural lifecycle.
 
 ```
 +---------------------------------------------------------------------------------------------------------+
-|                                    PROJECT EPOCH 1: SIH 2026 (ORIGINAL)                                |
+|                                    PLATFORM LIFECYCLE ARCHITECTURE                                      |
 +------------------------------------+--------------------------------------------------------------------+
 | Tool                               | Scope & Contribution                                               |
 +------------------------------------+--------------------------------------------------------------------+
-| OpenAI ChatGPT                     | SIH Problem Statement Decomposition & State Machine Blueprint:     |
+| OpenAI ChatGPT                     | Domain Decomposition & State Machine Blueprint:                    |
 | (GPT-4o)                           | Modeled the 5-stage procurement lifecycle:                         |
 |                                    | BOOKED -> ARRIVED -> WEIGHED -> QUALITY_CHECKED -> COMPLETED.       |
 |                                    | Generated synthetic Rajasthan Mandi dataset (Sitapura, Sanganer).  |
@@ -288,8 +286,6 @@ To uphold academic integrity and adhere strictly to assignment guidelines, the t
 | (Claude 3.5 Sonnet)                | Architected the HMAC-SHA256 passwordless OTP verification system;   |
 |                                    | designed SQLite transaction isolation to prevent race conditions   |
 |                                    | during simultaneous token slot bookings.                           |
-+------------------------------------+--------------------------------------------------------------------+
-|                               PROJECT EPOCH 2: PROMPT ENGINEERING COURSEWORK                            |
 +------------------------------------+--------------------------------------------------------------------+
 | Google Gemini                      | Runtime Bilingual Farmer Assistant & Real-Time Context Grounding:  |
 | (Gemini 2.5 Flash)                 | Primary runtime conversational engine. Powered the bilingual        |
@@ -301,21 +297,21 @@ To uphold academic integrity and adhere strictly to assignment guidelines, the t
 ### Detailed Contribution Log by Tool
 
 #### 1. OpenAI ChatGPT (GPT-4o)
-- **Epoch:** SIH 2026 Foundation
+- **Lifecycle Stage:** Foundation & Domain Architecture
 - **Tasks Performed:**
-  - Deconstructed the SIH Government Problem Statement regarding distress grain sales.
+  - Deconstructed agricultural domain requirements regarding distress grain sales and queue management.
   - Formulated the initial finite-state machine (FSM) transitioning bookings from creation to DBT settlement.
-  - Structured the mock farmer profiles and crop MSP baseline tables.
+  - Structured mock farmer profiles and crop MSP baseline tables.
 - **Representative Prompt Used:**
   ```markdown
-  "Design a robust state machine for a government crop procurement system where farmers 
+  "Design a robust state machine for a crop procurement system where farmers 
   bring grain to a physical Mandi. Define state transitions, allowed actors (Farmer, Staff, Admin), 
   and edge-case failure states (e.g. quality rejection, partial delivery)."
   ```
 - **Files Affected:** `prisma/schema.sql`, `lib/services.ts`
 
 #### 2. Anthropic Claude (Claude 3.5 Sonnet)
-- **Epoch:** Security & Concurrency Hardening (SIH Refinement & Code Review)
+- **Lifecycle Stage:** Concurrency & Security Hardening
 - **Tasks Performed:**
   - Audited the authentication architecture, replacing plaintext OTP storage with HMAC-SHA256 salted hashes.
   - Implemented the strict 3-active-token concurrency constraint (`MAX_ACTIVE_BOOKINGS = 3`) to prevent hoarding.
@@ -329,7 +325,7 @@ To uphold academic integrity and adhere strictly to assignment guidelines, the t
 - **Files Affected:** `lib/auth.ts`, `lib/db.ts`, `scripts/regression-test.ts`
 
 #### 3. Google Gemini (Gemini 2.5 Flash)
-- **Epoch:** Prompt Engineering Final Project Coursework
+- **Lifecycle Stage:** Conversational AI & Prompt Engineering
 - **Tasks Performed:**
   - Designed the end-to-end context-aware conversational prompt architecture in `app/api/farmer/assistant/route.ts`.
   - Tuned the Devanagari Hindi linguistic prompts for maximum agricultural readability.
@@ -373,7 +369,7 @@ All AI responses in KRISHIDHENU are evaluated across four objective criteria:
 
 ## 8. Verification & Test Suite Summary
 
-The KRISHIDHENU platform contains two complete automated test suites validating both core deterministic workflows and AI assistant integrations:
+The KRISHIDHENU platform contains automated test suites validating both core deterministic workflows and AI assistant integrations:
 
 1. **`scripts/regression-test.ts` (11/11 Passed - 100% OK):**
    - Test 1: Unique Token Generation (`WHT-0105`)
@@ -396,4 +392,4 @@ The KRISHIDHENU platform contains two complete automated test suites validating 
 
 ---
 
-*Document compiled and verified for the Prompt Engineering Final Project submission.*
+*KRISHIDHENU — Digital Farmer Procurement & Smart Mandi Management Platform.*

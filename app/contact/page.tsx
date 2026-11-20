@@ -6,7 +6,7 @@ import { ChevronLeft, Mail, PhoneCall, MapPin, Headphones, Clock, ShieldCheck } 
 
 export const metadata: Metadata = {
   title: "Contact Us — KRISHIDHENU",
-  description: "Get in touch with KRISHIDHENU support team and Department of Consumer Affairs helpline.",
+  description: "Get in touch with KRISHIDHENU support team and helpline.",
 };
 
 export default function ContactPage() {
@@ -95,13 +95,13 @@ export default function ContactPage() {
                 Address
               </h3>
               <div className="text-sm font-semibold text-ink leading-relaxed">
-                <p>Department of Consumer Affairs</p>
+                <p>KRISHIDHENU Operations</p>
                 <p className="text-ink-soft font-normal">Jaipur, Rajasthan, India</p>
               </div>
             </div>
             <p className="text-xs text-ink-faint mt-4 pt-3 border-t border-line/60 flex items-center gap-1.5">
               <ShieldCheck size={13} className="text-brand-600" />
-              <span>Government Purchase Division</span>
+              <span>Procurement Support Division</span>
             </p>
           </div>
         </div>
