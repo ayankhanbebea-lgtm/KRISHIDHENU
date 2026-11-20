@@ -7,8 +7,16 @@ import { detectLanguage } from "@/lib/language";
 
 export const dynamic = "force-dynamic";
 
-// Active Gemini model (defaulting to current stable gemini-2.5-flash, configurable via GEMINI_MODEL)
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+// Active Gemini models in priority order with resilient fallback
+// gemini-3.5-flash-lite provides sub-second response times and highest availability
+const CANDIDATE_MODELS = [
+  "gemini-3.5-flash-lite",
+  process.env.GEMINI_MODEL,
+  "gemini-3.5-flash",
+  "gemini-3.8-flash",
+].filter((m): m is string => Boolean(m && m.trim()));
+
+const UNIQUE_MODELS = Array.from(new Set(CANDIDATE_MODELS));
 
 function getFarmerContext(farmerId: string, sessionUser: { name: string; phone: string }) {
   const db = getDb();
@@ -109,7 +117,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     status: isConfigured ? "configured" : "unconfigured",
-    model: GEMINI_MODEL,
+    model: UNIQUE_MODELS[0] || "gemini-3.5-flash",
     defaultLanguage: "en",
     isLive: isConfigured,
   });
@@ -207,76 +215,95 @@ STRICT OPERATIONAL RULES:
    - Address the farmer respectfully: "Greetings [Name]" in English, "नमस्ते [Name] जी" in Hindi, or "Namaste [Name] ji" in Hinglish.
    - Keep answers clear, supportive, and concise. Avoid dense walls of text; use bullet points where helpful.`;
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 12000); // 12-second timeout
+    let generatedReply: string | null = null;
+    let successfulModel: string = UNIQUE_MODELS[0] || "gemini-3.5-flash";
+    let lastError: any = null;
+    let lastStatus: number = 500;
 
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+    for (const modelToTry of UNIQUE_MODELS) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000); // 15-second timeout
 
-    const response = await fetch(geminiUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: controller.signal,
-      body: JSON.stringify({
-        system_instruction: {
-          parts: [{ text: systemPrompt }],
-        },
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: message }],
-          },
-        ],
-        generationConfig: {
-          temperature: 0.3,
-          maxOutputTokens: 600,
-        },
-      }),
-    });
+      try {
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelToTry}:generateContent?key=${apiKey}`;
 
-    clearTimeout(timeout);
+        const response = await fetch(geminiUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({
+            system_instruction: {
+              parts: [{ text: systemPrompt }],
+            },
+            contents: [
+              {
+                role: "user",
+                parts: [{ text: message }],
+              },
+            ],
+            generationConfig: {
+              temperature: 0.3,
+              maxOutputTokens: 600,
+            },
+          }),
+        });
 
-    if (!response.ok) {
-      const errData = await response.json().catch(() => ({}));
-      console.error("[Gemini API Error]", response.status, errData);
+        clearTimeout(timeout);
 
-      let userFriendlyError = "The AI Assistant is temporarily unable to connect to the Google Gemini service.";
-      if (response.status === 400 || response.status === 403) {
-        userFriendlyError = "Gemini API key is invalid or lacks necessary permissions. Please check GEMINI_API_KEY in Vercel Project Settings.";
-      } else if (response.status === 429) {
-        userFriendlyError = "Gemini API rate limit reached. Please wait a moment and try again.";
+        if (response.ok) {
+          const data = await response.json();
+          const candidateText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (candidateText && candidateText.trim()) {
+            generatedReply = candidateText.trim();
+            successfulModel = modelToTry;
+            break;
+          }
+        } else {
+          lastStatus = response.status;
+          lastError = await response.json().catch(() => ({}));
+          console.warn(`[Gemini API] Model ${modelToTry} returned ${response.status}:`, lastError);
+
+          // If model is deprecated (404) or experiencing temporary demand spikes (503), try next model
+          if (response.status === 404 || response.status === 503) {
+            continue;
+          }
+          // If auth/credentials error (400, 403), stop
+          break;
+        }
+      } catch (err: any) {
+        clearTimeout(timeout);
+        lastError = err;
+        console.warn(`[Gemini API] Exception with model ${modelToTry}:`, err?.message);
       }
-
-      return NextResponse.json(
-        {
-          reply: `${userFriendlyError} (Your current token is ${context.activeBooking?.token || "none"}).`,
-          error: errData?.error?.message || "Service unavailable",
-          isLive: false,
-          model: GEMINI_MODEL,
-          language: detectedLanguage,
-        },
-        { status: 200 }
-      );
     }
 
-    const data = await response.json();
-    const generatedReply = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-
-    if (!generatedReply) {
+    if (generatedReply) {
       return NextResponse.json({
-        reply: "I received your question, but could not generate a response. Please try rephrasing.",
-        model: GEMINI_MODEL,
-        isLive: false,
+        reply: generatedReply,
+        model: successfulModel,
+        isLive: true,
+        verifiedToken: context.activeBooking?.token || null,
         language: detectedLanguage,
       });
     }
 
-    return NextResponse.json({
-      reply: generatedReply.trim(),
-      model: GEMINI_MODEL,
-      isLive: true,
-      verifiedToken: context.activeBooking?.token || null,
-      language: detectedLanguage,
-    });
+    let userFriendlyError = "The AI Assistant is temporarily unable to connect to the Google Gemini service.";
+    if (lastStatus === 400 || lastStatus === 403) {
+      userFriendlyError = "Gemini API key is invalid or lacks necessary permissions. Please check GEMINI_API_KEY in Vercel Project Settings.";
+    } else if (lastStatus === 429) {
+      userFriendlyError = "Gemini API rate limit reached. Please wait a moment and try again.";
+    }
+
+    return NextResponse.json(
+      {
+        reply: `${userFriendlyError} (Your current token is ${context.activeBooking?.token || "none"}).`,
+        error: lastError?.error?.message || "Service unavailable",
+        isLive: false,
+        model: successfulModel,
+        language: detectedLanguage,
+      },
+      { status: 200 }
+    );
   } catch (err: any) {
     if (err.name === "AbortError") {
       return NextResponse.json(
