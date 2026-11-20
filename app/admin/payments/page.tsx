@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import DashboardShell from "@/components/DashboardShell";
 import StatusBadge from "@/components/StatusBadge";
 import MetricCard, { MetricRow } from "@/components/MetricCard";
@@ -70,33 +70,93 @@ export default function AdminPaymentsPage() {
   const [showFailForm, setShowFailForm] = useState(false);
   const [failReason, setFailReason] = useState("");
 
+  const inFlightRef = useRef(false);
+  const latestReqIdRef = useRef(0);
+  const filtersRef = useRef({ statusFilter, centreFilter, dateFilter, searchQuery });
+
+  useEffect(() => {
+    filtersRef.current = { statusFilter, centreFilter, dateFilter, searchQuery };
+  }, [statusFilter, centreFilter, dateFilter, searchQuery]);
+
   const loadData = useCallback(async (isInitial = false) => {
-    if (isInitial) setLoading(true);
+    if (isInitial) {
+      setLoading(true);
+    } else if (inFlightRef.current) {
+      return;
+    }
+
+    inFlightRef.current = true;
+    const reqId = ++latestReqIdRef.current;
+    const timestamp = new Date().toISOString();
+
     try {
-      const meRes = await fetch("/api/auth/me").then((r) => r.json());
-      setMe(meRes.user);
+      if (isInitial) {
+        try {
+          const meRes = await fetch("/api/auth/me", { cache: "no-store" }).then((r) => r.json());
+          setMe(meRes.user);
+        } catch {}
+      }
 
+      const { statusFilter: sf, centreFilter: cf, dateFilter: df, searchQuery: sq } = filtersRef.current;
       const params = new URLSearchParams();
-      if (statusFilter && statusFilter !== "ALL") params.set("status", statusFilter);
-      if (centreFilter && centreFilter !== "ALL") params.set("centreId", centreFilter);
-      if (dateFilter) params.set("date", dateFilter);
-      if (searchQuery) params.set("search", searchQuery);
+      if (sf && sf !== "ALL") params.set("status", sf);
+      if (cf && cf !== "ALL") params.set("centreId", cf);
+      if (df) params.set("date", df);
+      if (sq) params.set("search", sq);
+      params.set("_t", String(Date.now()));
 
-      const res = await fetch(`/api/admin/payments?${params.toString()}`);
+      const res = await fetch(`/api/admin/payments?${params.toString()}`, {
+        cache: "no-store",
+        headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
+      });
+
+      if (reqId < latestReqIdRef.current) {
+        console.log(`[AdminPayments] Dropping stale response reqId=${reqId}`);
+        return;
+      }
+
       if (!res.ok) throw new Error("Failed to load payment records.");
       const data = await res.json();
 
-      setPayments(data.payments || []);
-      if (data.stats) setStats(data.stats);
+      const incomingPayments = data.payments || [];
+      console.log(
+        `[ADMIN_PAYMENTS_TRACE] time=${timestamp} reqId=${reqId} endpoint=/api/admin/payments returned=${incomingPayments.length} totalRecords=${data.stats?.totalRecords}`
+      );
+
+      // Reconcile and preserve: do not replace valid records with empty array on cold responses
+      setPayments((prevPayments: any[]) => {
+        if (incomingPayments.length > 0) return incomingPayments;
+        if (prevPayments.length > 0 && (!sf || sf === "ALL") && (!cf || cf === "ALL") && !df && !sq) {
+          console.warn(`[ADMIN_PAYMENTS_PRESERVE] reqId=${reqId}: Preserving ${prevPayments.length} existing payment records`);
+          return prevPayments;
+        }
+        return incomingPayments;
+      });
+
+      if (data.stats) {
+        setStats((prevStats: any) => {
+          if (data.stats.totalRecords > 0 || !prevStats?.totalRecords) {
+            return data.stats;
+          }
+          if (prevStats.totalRecords > 0) {
+            return prevStats; // Preserve valid stats
+          }
+          return data.stats;
+        });
+      }
+
       if (data.centres) setCentres(data.centres);
       setError("");
     } catch (err: any) {
-      console.error("[AdminPayments Error]", err);
-      setError(err.message || "Unable to fetch payment records.");
+      if (reqId === latestReqIdRef.current) {
+        console.error("[AdminPayments Error]", err);
+        setError(err.message || "Unable to fetch payment records.");
+      }
     } finally {
+      inFlightRef.current = false;
       if (isInitial) setLoading(false);
     }
-  }, [statusFilter, centreFilter, dateFilter, searchQuery]);
+  }, []);
 
   useEffect(() => {
     loadData(true);
@@ -123,6 +183,11 @@ export default function AdminPaymentsPage() {
       if (es) es.close();
     };
   }, [loadData]);
+
+  // When filters change, trigger explicit refresh
+  useEffect(() => {
+    loadData(false);
+  }, [statusFilter, centreFilter, dateFilter, searchQuery, loadData]);
 
   async function executeAction(payload: any) {
     setBusy(true);

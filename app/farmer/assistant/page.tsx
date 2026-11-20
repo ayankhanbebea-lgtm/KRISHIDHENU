@@ -24,7 +24,7 @@ export default function AssistantPage() {
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [activeModel, setActiveModel] = useState<string>("gemini-2.5-flash");
+  const [activeModel, setActiveModel] = useState<string>("gemini-3.5-flash");
   const [isLive, setIsLive] = useState<boolean | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
 

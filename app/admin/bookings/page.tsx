@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import DashboardShell from "@/components/DashboardShell";
 import { ADMIN_LINKS } from "@/lib/nav";
 import { CardSkeleton } from "@/components/Skeleton";
@@ -57,40 +57,104 @@ export default function AdminBookingsPage() {
   const [cancelLoading, setCancelLoading] = useState(false);
   const [error, setError] = useState("");
 
-  async function load() {
-    const meRes = await fetch("/api/auth/me").then((r) => r.json());
-    setMe(meRes.user);
-    if (meRes.user?.language) setLang(meRes.user.language);
+  const inFlightRef = useRef(false);
+  const latestReqIdRef = useRef(0);
+  const filtersRef = useRef({ filterDate, filterCentre, filterStatus });
 
-    const centresRes = await fetch("/api/admin/centres");
-    if (centresRes.ok) {
-      const data = await centresRes.json();
-      setCentres(data.centres);
+  useEffect(() => {
+    filtersRef.current = { filterDate, filterCentre, filterStatus };
+  }, [filterDate, filterCentre, filterStatus]);
+
+  const fetchBookings = useCallback(async (isInitial = false) => {
+    if (inFlightRef.current && !isInitial) return;
+    inFlightRef.current = true;
+    const reqId = ++latestReqIdRef.current;
+    const timestamp = new Date().toISOString();
+
+    try {
+      const { filterDate: fd, filterCentre: fc, filterStatus: fs } = filtersRef.current;
+      const params = new URLSearchParams();
+      if (fd) params.set("date", fd);
+      if (fc) params.set("centreId", fc);
+      if (fs) params.set("status", fs);
+      params.set("_t", String(Date.now()));
+
+      const res = await fetch(`/api/admin/bookings?${params.toString()}`, {
+        cache: "no-store",
+        headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
+      });
+
+      if (reqId < latestReqIdRef.current) return;
+
+      if (res.ok) {
+        const data = await res.json();
+        const incomingBookings = data.bookings || [];
+
+        console.log(
+          `[ADMIN_BOOKINGS_TRACE] time=${timestamp} reqId=${reqId} endpoint=/api/admin/bookings returned=${incomingBookings.length} total=${data.total}`
+        );
+
+        setBookings((prevBookings: BookingItem[] | null) => {
+          if (incomingBookings.length > 0) return incomingBookings;
+          if (prevBookings && prevBookings.length > 0 && !fd && !fc && !fs) {
+            console.warn(
+              `[ADMIN_BOOKINGS_PRESERVE] reqId=${reqId}: Preserving ${prevBookings.length} existing bookings against empty response`
+            );
+            return prevBookings;
+          }
+          return incomingBookings;
+        });
+      }
+    } finally {
+      inFlightRef.current = false;
     }
+  }, []);
 
-    await fetchBookings();
-  }
+  const load = useCallback(async () => {
+    try {
+      const meRes = await fetch("/api/auth/me", { cache: "no-store" }).then((r) => r.json());
+      setMe(meRes.user);
+      if (meRes.user?.language) setLang(meRes.user.language);
 
-  async function fetchBookings() {
-    const params = new URLSearchParams();
-    if (filterDate) params.set("date", filterDate);
-    if (filterCentre) params.set("centreId", filterCentre);
-    if (filterStatus) params.set("status", filterStatus);
+      const centresRes = await fetch("/api/admin/centres", { cache: "no-store" });
+      if (centresRes.ok) {
+        const data = await centresRes.json();
+        setCentres(data.centres || []);
+      }
+    } catch {}
 
-    const res = await fetch(`/api/admin/bookings?${params.toString()}`);
-    if (res.ok) {
-      const data = await res.json();
-      setBookings(data.bookings);
-    }
-  }
+    await fetchBookings(true);
+  }, [fetchBookings]);
 
   useEffect(() => {
     load();
-  }, []);
+
+    let es: EventSource | null = null;
+    try {
+      es = new EventSource("/api/realtime/events");
+      es.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload.type && payload.type !== "CONNECTED") {
+            fetchBookings(false);
+          }
+        } catch {}
+      };
+    } catch {}
+
+    const interval = setInterval(() => {
+      fetchBookings(false);
+    }, 6000);
+
+    return () => {
+      clearInterval(interval);
+      if (es) es.close();
+    };
+  }, [load, fetchBookings]);
 
   useEffect(() => {
-    fetchBookings();
-  }, [filterDate, filterCentre, filterStatus]);
+    fetchBookings(false);
+  }, [filterDate, filterCentre, filterStatus, fetchBookings]);
 
   async function handleConfirmCancel() {
     if (!cancellingBooking) return;

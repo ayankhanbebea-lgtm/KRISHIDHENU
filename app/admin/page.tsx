@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import DashboardShell from "@/components/DashboardShell";
 import MetricCard, { MetricRow } from "@/components/MetricCard";
 import LoadIndicator from "@/components/LoadIndicator";
@@ -21,18 +21,84 @@ export default function AdminDashboard() {
   const [data, setData] = useState<any>(undefined);
   const [me, setMe] = useState<any>(null);
 
-  async function load() {
-    const meRes = await fetch("/api/auth/me").then((r) => r.json());
-    setMe(meRes.user);
-    const res = await fetch("/api/admin/overview").then((r) => r.json());
-    setData(res);
-  }
+  const inFlightRef = useRef(false);
+  const latestReqIdRef = useRef(0);
+
+  const load = useCallback(async (isInitial = false) => {
+    if (inFlightRef.current && !isInitial) return;
+    inFlightRef.current = true;
+    const reqId = ++latestReqIdRef.current;
+    const timestamp = new Date().toISOString();
+
+    try {
+      if (isInitial) {
+        try {
+          const meRes = await fetch("/api/auth/me", { cache: "no-store" }).then((r) => r.json());
+          setMe(meRes.user);
+        } catch {}
+      }
+
+      const res = await fetch(`/api/admin/overview?_t=${Date.now()}`, {
+        cache: "no-store",
+        headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
+      }).then((r) => r.json());
+
+      if (reqId < latestReqIdRef.current) return;
+
+      console.log(
+        `[ADMIN_OVERVIEW_TRACE] time=${timestamp} reqId=${reqId} totalFarmers=${res?.overview?.totalFarmers} todaysBookings=${res?.overview?.todaysBookings}`
+      );
+
+      setData((prevData: any) => {
+        if (!prevData) return res;
+        const prevBookings = prevData.overview?.todaysBookings || 0;
+        const newBookings = res.overview?.todaysBookings || 0;
+
+        if (prevBookings > 0 && newBookings === 0) {
+          console.warn(`[ADMIN_OVERVIEW_PRESERVE] reqId=${reqId}: Preserving active metrics against cold empty response`);
+          return {
+            ...res,
+            overview: {
+              ...res.overview,
+              todaysBookings: prevData.overview.todaysBookings,
+              activeQueues: Math.max(res.overview.activeQueues || 0, prevData.overview.activeQueues || 0),
+              completedProcurements: Math.max(res.overview.completedProcurements || 0, prevData.overview.completedProcurements || 0),
+              pendingPayments: prevData.overview.pendingPayments,
+            },
+          };
+        }
+        return res;
+      });
+    } finally {
+      inFlightRef.current = false;
+    }
+  }, []);
 
   useEffect(() => {
-    load();
-    const interval = setInterval(load, 15000);
-    return () => clearInterval(interval);
-  }, []);
+    load(true);
+
+    let es: EventSource | null = null;
+    try {
+      es = new EventSource("/api/realtime/events");
+      es.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload.type && payload.type !== "CONNECTED") {
+            load(false);
+          }
+        } catch {}
+      };
+    } catch {}
+
+    const interval = setInterval(() => {
+      load(false);
+    }, 10000);
+
+    return () => {
+      clearInterval(interval);
+      if (es) es.close();
+    };
+  }, [load]);
 
   const links = getAdminLinks(t);
 

@@ -117,7 +117,41 @@ export default function StaffDashboard() {
           return;
         }
 
-        setData(d);
+        setData((prevData: any) => {
+          const timestamp = new Date().toISOString();
+          const prevRows = prevData?.rows || [];
+          const incomingRows = d?.rows || [];
+
+          console.log(
+            `[STAFF_UI_TRACE] time=${timestamp} reqId=${reqId} endpoint=/api/staff/queue status=${res.status} returned=${incomingRows.length} prev=${prevRows.length} isInitial=${isInitial}`
+          );
+
+          if (!prevData || prevRows.length === 0) {
+            return d;
+          }
+
+          if (incomingRows.length > 0) {
+            return d;
+          }
+
+          // If background refresh returned 0 rows but we have valid records for this centre & date, preserve them
+          const sameDate = !activeDate || activeDate === "all" || prevData.date === d.date;
+          const sameCentre = !activeCentre || prevData.centre?.id === d.centre?.id;
+
+          if (prevRows.length > 0 && sameDate && sameCentre) {
+            console.warn(
+              `[STAFF_UI_PRESERVE] time=${timestamp} reqId=${reqId}: Preserving ${prevRows.length} existing bookings against empty response`
+            );
+            return {
+              ...prevData,
+              todayIST: d.todayIST || prevData.todayIST,
+              allCentres: d.allCentres?.length ? d.allCentres : prevData.allCentres,
+              serving: d.serving !== undefined ? d.serving : prevData.serving,
+            };
+          }
+
+          return d;
+        });
 
         // Populate initial date and centre selection without triggering effect recreation
         if (!selectedDateRef.current && d.date && d.date !== "all") {

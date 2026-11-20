@@ -8,13 +8,13 @@ import { detectLanguage } from "@/lib/language";
 export const dynamic = "force-dynamic";
 
 // Active Gemini models in priority order with resilient fallback
-// gemini-3.5-flash-lite provides sub-second response times and highest availability
+// gemini-3.5-flash and gemini-3.5-flash-lite provide sub-second response times and highest availability
 const CANDIDATE_MODELS = [
   process.env.GEMINI_MODEL,
-  "gemini-2.5-flash",
-  "gemini-3.5-flash-lite",
   "gemini-3.5-flash",
+  "gemini-3.5-flash-lite",
   "gemini-3.8-flash",
+  "gemini-2.5-flash",
 ].filter((m): m is string => Boolean(m && m.trim()));
 
 const UNIQUE_MODELS = Array.from(new Set(CANDIDATE_MODELS));
