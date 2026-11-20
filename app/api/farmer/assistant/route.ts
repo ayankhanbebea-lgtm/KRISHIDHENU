@@ -3,6 +3,7 @@ import { getSession } from "@/lib/auth";
 import { getDb } from "@/lib/db";
 import { getFarmerProfileId } from "@/lib/farmer";
 import { farmersAhead, estimateWaitMinutes, currentlyServingToken } from "@/lib/services";
+import { detectLanguage } from "@/lib/language";
 
 export const dynamic = "force-dynamic";
 
@@ -79,7 +80,7 @@ function getFarmerContext(farmerId: string, sessionUser: { name: string; phone: 
     }
   }
 
-  // 5. Government MSP Rates in System
+  // 5. Official MSP Rates in System
   const cropsList = db.prepare(`SELECT name, code, msp_rate as mspRate FROM crops ORDER BY name`).all();
 
   return {
@@ -95,6 +96,23 @@ function getFarmerContext(farmerId: string, sessionUser: { name: string; phone: 
     paymentDetails,
     standardMspRates: cropsList,
   };
+}
+
+export async function GET(req: NextRequest) {
+  const session = await getSession(req);
+  if (!session || session.role !== "FARMER") {
+    return NextResponse.json({ error: "Please login as a farmer." }, { status: 401 });
+  }
+
+  const apiKey = process.env.GEMINI_API_KEY || process.env.AI_PROVIDER_API_KEY;
+  const isConfigured = Boolean(apiKey && !apiKey.startsWith("your_") && apiKey.trim() !== "");
+
+  return NextResponse.json({
+    status: isConfigured ? "configured" : "unconfigured",
+    model: GEMINI_MODEL,
+    defaultLanguage: "en",
+    isLive: isConfigured,
+  });
 }
 
 export async function POST(req: NextRequest) {
@@ -122,40 +140,72 @@ export async function POST(req: NextRequest) {
     // Pull verified real-time database context for this farmer
     const context = getFarmerContext(farmerId, { name: session.name, phone: session.phone });
 
+    // Detect language of the incoming message
+    const detectedLanguage = detectLanguage(message);
+
     const apiKey = process.env.GEMINI_API_KEY || process.env.AI_PROVIDER_API_KEY;
 
     // Graceful offline fallback if API key is not yet configured or is a placeholder
     if (!apiKey || apiKey.startsWith("your_") || apiKey.trim() === "") {
+      let offlineReply = "";
+      const token = context.activeBooking?.token || "none";
+      const ahead = context.queueMetrics?.farmersAhead ?? 0;
+
+      if (detectedLanguage === "hi") {
+        offlineReply = `नमस्ते ${session.name} जी! कृषिधेनु एआई सहायक वर्तमान में ऑफ़लाइन पूर्वावलोकन मोड में है क्योंकि GEMINI_API_KEY कॉन्फ़िगर नहीं है। आपका सक्रिय टोकन ${token} है, और कतार में आपसे आगे ${ahead} किसान हैं। पूर्ण Google Gemini AI सक्रिय करने के लिए कृपया Vercel Environment Variables में GEMINI_API_KEY सेट करें।`;
+      } else if (detectedLanguage === "hinglish") {
+        offlineReply = `Namaste ${session.name} ji! KRISHIDHENU AI Assistant abhi offline preview mode me hai kyunki GEMINI_API_KEY configured nahi hai. Aapka active token ${token} hai aur queue me aapse aage ${ahead} farmers hain. Real Google Gemini AI activate karne ke liye Vercel Environment Variables me GEMINI_API_KEY set karein.`;
+      } else {
+        offlineReply = `Hello ${session.name}! The KRISHIDHENU AI Assistant is currently operating in offline preview mode because GEMINI_API_KEY is not configured yet. Your active token is ${token}, and you have ${ahead} farmers ahead in queue. To activate live Google Gemini AI responses, please configure GEMINI_API_KEY in your Vercel Project Settings → Environment Variables.`;
+      }
+
       return NextResponse.json({
-        reply: `Namaste ${session.name}! AI Assistant is operating in demo mode because GEMINI_API_KEY is not configured yet. Your current token is ${context.activeBooking?.token || "none"}, and you have ${context.queueMetrics?.farmersAhead ?? 0} farmers ahead. To activate full Google Gemini AI responses, please add GEMINI_API_KEY in your environment variables.`,
+        reply: offlineReply,
         offline: true,
+        isLive: false,
         model: "offline-mock",
+        language: detectedLanguage,
       });
     }
 
-    const systemPrompt = `You are "KRISHIDHENU AI Sahayak" (कृषिधेनु एआई सहायक), an empathetic, truthful, and intelligent agricultural assistant for Indian farmers at government MSP Mandi procurement centres.
+    const systemPrompt = `You are "KRISHIDHENU AI Assistant", an empathetic, truthful, and intelligent agricultural assistant for Indian farmers using the KRISHIDHENU Digital Farmer Procurement & Smart Mandi Management Platform.
 
 === VERIFIED REAL-TIME DATABASE CONTEXT FOR THIS LOGGED-IN FARMER ===
 ${JSON.stringify(context, null, 2)}
 =====================================================================
 
-STRICT RULES & CONSTRAINTS:
-1. TRUTHFULNESS & ANTI-HALLUCINATION:
-   - For all questions regarding the farmer's token number, slot date, queue position, estimated wait time, Mandi centre location, and payment status, use EXCLUSIVELY the verified data provided above.
+Language Selection Rules:
+- Default response language: English.
+- Detect the language of the user's latest message.
+- English input → English response.
+- Hindi input → Hindi response in Devanagari script.
+- Hinglish input → Hinglish response in Roman script.
+- Always follow the language of the latest user message.
+- Never switch languages without a clear reason.
+- Keep responses simple, natural, helpful and easy for farmers to understand.
+
+[Language Detection for Current Message]: ${detectedLanguage.toUpperCase()} (Respond strictly in this language).
+
+STRICT OPERATIONAL RULES:
+1. TRUTHFULNESS & ZERO HALLUCINATION:
+   - For all questions regarding the farmer's token number, slot date, queue position, estimated wait time, Mandi centre location, and payment status, use EXCLUSIVELY the verified data provided in the database context above.
    - NEVER invent or guess token numbers, queue positions, payment amounts, or dates.
-   - If the farmer has no active booking, politely inform them: "आपके पास अभी कोई सक्रिय टोकन नहीं है। आप होम स्क्रीन पर 'Book Procurement Slot' से नया स्लॉट बुक कर सकते हैं।" (or in English).
+   - If the farmer has no active booking, inform them politely:
+     * English: "You do not currently have an active procurement token. You can book a slot anytime using the 'Book Slot' option on your dashboard."
+     * Hindi: "आपके पास अभी कोई सक्रिय टोकन नहीं है। आप डैशबोर्ड पर 'Book Slot' विकल्प से नया स्लॉट बुक कर सकते हैं।"
+     * Hinglish: "Aapke paas abhi koi active token nahi hai. Aap dashboard par 'Book Slot' option use karke naya slot book kar sakte hain."
 
-2. BILINGUAL RESPONSE:
-   - If the user writes in Hindi or Hinglish, reply in warm, respectful, and simple Hindi (Devanagari script).
-   - If the user writes in English, reply in clean, professional, and accessible English.
-
-3. DISTINGUISHING VERIFIED DATA VS GENERAL ADVICE:
+2. DISTINGUISHING VERIFIED DATA VS GENERAL PROCUREMENT GUIDELINES:
    - When asked about their specific booking or token, cite the exact numbers from the context.
-   - When asked for general advice (e.g. grain moisture limits, clean bags, required documents like Aadhaar / Bank Passbook / Girdawari), provide accurate Indian agricultural procurement norms (e.g. moisture under 12% for Wheat, clean non-torn gunny bags). Clearly state that these are standard guidelines.
+   - When asked about official MSP rates or quality standards:
+     * Official CACP/FCI standards: Moisture limit is 12.0%. Between 12.1% - 14.0%, proportional value deduction applies. Over 14.0%, grain requires sun-drying.
+     * Fair assessment: Quality deductions are calculated transparently on the portal; staff cannot levy arbitrary cash cuts.
+     * Farmer rights: If a farmer disputes a moisture reading, they have the statutory right to request a second sample test before signing the receipt.
+     * Document checklist: Remind farmers to carry Aadhaar Card, Bank Passbook / Account details, and Land Girdawari / Jamabandi copy.
 
-4. TONE & BREVITY:
-   - Be respectful, encouraging, and clear ("नमस्ते किसान भाई / Greetings").
-   - Keep answers concise and direct. Avoid overwhelming paragraphs; use bullet points where helpful.`;
+3. TONE & BREVITY:
+   - Address the farmer respectfully: "Greetings [Name]" in English, "नमस्ते [Name] जी" in Hindi, or "Namaste [Name] ji" in Hinglish.
+   - Keep answers clear, supportive, and concise. Avoid dense walls of text; use bullet points where helpful.`;
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 12000); // 12-second timeout
@@ -189,12 +239,20 @@ STRICT RULES & CONSTRAINTS:
       const errData = await response.json().catch(() => ({}));
       console.error("[Gemini API Error]", response.status, errData);
 
-      // Helpful descriptive error in case of API failure
+      let userFriendlyError = "The AI Assistant is temporarily unable to connect to the Google Gemini service.";
+      if (response.status === 400 || response.status === 403) {
+        userFriendlyError = "Gemini API key is invalid or lacks necessary permissions. Please check GEMINI_API_KEY in Vercel Project Settings.";
+      } else if (response.status === 429) {
+        userFriendlyError = "Gemini API rate limit reached. Please wait a moment and try again.";
+      }
+
       return NextResponse.json(
         {
-          reply: `AI Assistant is temporarily unable to connect to Gemini API (Status ${response.status}: ${errData?.error?.message || "Service unavailable"}). Your current token is ${context.activeBooking?.token || "N/A"}.`,
-          error: errData?.error?.message,
+          reply: `${userFriendlyError} (Your current token is ${context.activeBooking?.token || "none"}).`,
+          error: errData?.error?.message || "Service unavailable",
+          isLive: false,
           model: GEMINI_MODEL,
+          language: detectedLanguage,
         },
         { status: 200 }
       );
@@ -207,24 +265,28 @@ STRICT RULES & CONSTRAINTS:
       return NextResponse.json({
         reply: "I received your question, but could not generate a response. Please try rephrasing.",
         model: GEMINI_MODEL,
+        isLive: false,
+        language: detectedLanguage,
       });
     }
 
     return NextResponse.json({
       reply: generatedReply.trim(),
       model: GEMINI_MODEL,
+      isLive: true,
       verifiedToken: context.activeBooking?.token || null,
+      language: detectedLanguage,
     });
   } catch (err: any) {
     if (err.name === "AbortError") {
       return NextResponse.json(
-        { reply: "The AI assistant request timed out. Please try asking again." },
+        { reply: "The AI assistant request timed out. Please try asking again.", isLive: false },
         { status: 504 }
       );
     }
     console.error("[Assistant Route Exception]", err);
     return NextResponse.json(
-      { error: "An unexpected error occurred while processing your request." },
+      { error: "An unexpected error occurred while processing your request.", isLive: false },
       { status: 500 }
     );
   }

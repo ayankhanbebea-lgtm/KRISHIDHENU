@@ -8,24 +8,44 @@ import { Send, Sparkles, Bot, AlertCircle } from "lucide-react";
 type Msg = { role: "user" | "assistant"; text: string; offline?: boolean };
 
 const SUGGESTIONS = [
-  "मेरी बारी कब आएगी? (When is my turn?)",
-  "मेरा टोकन व कतार स्थिति (My Token & Queue)",
-  "भुगतान स्थिति (Payment Status)",
-  "मंडी का समय व पता (Mandi Timings & Address)",
-  "गेहूं और सोयाबीन MSP दर (Crop MSP Rates)",
+  "What is my token status?",
+  "When is my turn in queue?",
+  "How can I book a slot?",
+  "What is the MSP rate for Wheat?",
+  "Check my payment status",
 ];
 
 export default function AssistantPage() {
   const [messages, setMessages] = useState<Msg[]>([
     {
       role: "assistant",
-      text: "नमस्ते किसान भाई! मैं कृषिधेनु एआई सहायक हूँ। आप मुझसे अपने टोकन, कतार स्थिति, मंडी समय, फसल MSP या भुगतान के बारे में हिंदी या English में पूछ सकते हैं।",
+      text: "Hello! I am your KRISHIDHENU AI Assistant. How can I help you today with your token status, queue position, Mandi timings, crop MSP rates, or payment details? You can ask in English, हिंदी, or Hinglish.",
     },
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [activeModel, setActiveModel] = useState<string>("gemini-2.5-flash");
+  const [isLive, setIsLive] = useState<boolean | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
+
+  // Check initial configuration on mount
+  useEffect(() => {
+    fetch("/api/farmer/assistant")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data) {
+          if (typeof data.isLive === "boolean") {
+            setIsLive(data.isLive);
+          } else if (data.status === "configured") {
+            setIsLive(true);
+          } else if (data.status === "unconfigured") {
+            setIsLive(false);
+          }
+          if (data.model) setActiveModel(data.model);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -46,13 +66,16 @@ export default function AssistantPage() {
       });
       const data = await res.json();
       if (data.model) setActiveModel(data.model);
+      if (typeof data.isLive === "boolean") {
+        setIsLive(data.isLive);
+      }
 
       if (!res.ok) {
         setMessages((m) => [
           ...m,
           {
             role: "assistant",
-            text: data.error || "Unable to reach AI Assistant. Please try again later.",
+            text: data.error || "Unable to reach the AI Assistant. Please try again later.",
             offline: true,
           },
         ]);
@@ -63,8 +86,8 @@ export default function AssistantPage() {
         ...m,
         {
           role: "assistant",
-          text: data.reply || "Sorry, I couldn't generate a response. Please try rephrasing.",
-          offline: Boolean(data.offline),
+          text: data.reply || "I received your question, but could not generate a response. Please try rephrasing.",
+          offline: Boolean(data.offline || !data.isLive),
         },
       ]);
     } catch {
@@ -72,7 +95,7 @@ export default function AssistantPage() {
         ...m,
         {
           role: "assistant",
-          text: "नेटवर्क समस्या के कारण उत्तर नहीं मिल पाया। कृपया पुनः प्रयास करें। (Connection failed. Please check your network and try again.)",
+          text: "Connection failed. Please check your network and try again.",
           offline: true,
         },
       ]);
@@ -83,19 +106,31 @@ export default function AssistantPage() {
 
   return (
     <main className="min-h-screen pb-24 bg-surface flex flex-col">
-      <FarmerTopBar name="Farmer" title="AI Sahayak" />
+      <FarmerTopBar name="Farmer" title="AI Assistant" />
 
       <div className="max-w-lg mx-auto w-full px-4 py-3 flex-1 flex flex-col">
         {/* Model & Status Badge Header */}
         <div className="flex items-center justify-between px-3 py-1.5 bg-brand-50/70 border border-brand-200/60 rounded-lg mb-3 text-xs">
           <div className="flex items-center gap-1.5 text-brand-900 font-semibold">
             <Bot size={15} className="text-brand-600" />
-            <span>KRISHIDHENU AI Sahayak</span>
+            <span>KRISHIDHENU AI Assistant</span>
           </div>
-          <div className="flex items-center gap-1 text-[11px] text-brand-700 font-medium">
-            <Sparkles size={12} className="text-amber-500 animate-pulse" />
-            <span className="font-mono">{activeModel}</span>
-          </div>
+
+          {isLive === true ? (
+            <div className="flex items-center gap-1.5 text-[11px] text-emerald-800 font-semibold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+              <Sparkles size={12} className="text-emerald-600 animate-pulse" />
+              <span>Gemini AI Active</span>
+            </div>
+          ) : isLive === false ? (
+            <div className="flex items-center gap-1.5 text-[11px] text-amber-800 font-medium bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
+              <AlertCircle size={12} className="text-amber-600" />
+              <span>Demo Mode (Offline)</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1 text-[11px] text-brand-700 font-medium">
+              <span className="font-mono">{activeModel}</span>
+            </div>
+          )}
         </div>
 
         {/* Message Thread */}
@@ -128,7 +163,7 @@ export default function AssistantPage() {
           {loading && (
             <div className="flex items-center gap-2 text-xs text-ink-faint pl-9">
               <span className="w-1.5 h-1.5 rounded-full bg-brand-600 animate-pulse-dot" />
-              <span>AI सहायक सोच रहा है... (Thinking...)</span>
+              <span>AI Assistant is thinking...</span>
             </div>
           )}
           <div ref={endRef} />
@@ -158,7 +193,7 @@ export default function AssistantPage() {
         >
           <input
             className="input !py-2.5 !text-sm"
-            placeholder="हिंदी या English में प्रश्न पूछें..."
+            placeholder="Ask your question..."
             value={input}
             onChange={(e) => setInput(e.target.value)}
             disabled={loading}
