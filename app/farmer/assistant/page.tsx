@@ -8,15 +8,16 @@ import { Send, Sparkles, Bot, Database } from "lucide-react";
 type Msg = {
   role: "user" | "assistant";
   text: string;
-  source?: "gemini" | "database_fallback";
+  source?: "gemini" | "gemini_db" | "database_fallback";
   model?: string;
 };
 
 const SUGGESTIONS = [
   "What is my token status?",
   "When is my turn in queue?",
-  "How can I book a slot?",
-  "What is the MSP rate for Wheat?",
+  "Who is the founder of KRISHIDHENU?",
+  "What is KRISHIDHENU?",
+  "Explain MSP in simple Hindi.",
   "Check my payment status",
 ];
 
@@ -24,28 +25,14 @@ export default function AssistantPage() {
   const [messages, setMessages] = useState<Msg[]>([
     {
       role: "assistant",
-      text: "Hello! I am your KRISHIDHENU Assistant. How can I help you today with your token status, queue position, Mandi timings, crop MSP rates, or payment details? You can ask in English, हिंदी, or Hinglish.",
-      source: "database_fallback",
-      model: "initial-welcome",
+      text: "Hello! I am your KRISHIDHENU AI Assistant powered by Gemini. How can I help you today with your token status, queue position, Mandi timings, crop MSP rates, payment details, or agricultural guidance? You can ask in English, हिंदी, or Hinglish.",
+      source: "gemini",
+      model: "gemini-3.5-flash-lite",
     },
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [isLive, setIsLive] = useState<boolean | null>(null);
-  const [lastSource, setLastSource] = useState<"gemini" | "database_fallback" | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
-
-  // Check initial configuration on mount
-  useEffect(() => {
-    fetch("/api/farmer/assistant")
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (data && typeof data.isLive === "boolean") {
-          setIsLive(data.isLive);
-        }
-      })
-      .catch(() => {});
-  }, []);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -66,19 +53,12 @@ export default function AssistantPage() {
       });
       const data = await res.json();
 
-      if (typeof data?.isLive === "boolean") {
-        setIsLive(data.isLive);
-      }
-      if (data?.source) {
-        setLastSource(data.source);
-      }
-
       if (!res.ok) {
         setMessages((m) => [
           ...m,
           {
             role: "assistant",
-            text: data.error || "Unable to reach the Assistant right now. Please try again.",
+            text: data.error || "Unable to reach Gemini AI Assistant right now. Please try again.",
             source: "database_fallback",
           },
         ]);
@@ -90,7 +70,7 @@ export default function AssistantPage() {
         {
           role: "assistant",
           text: data.reply || "I received your question. How else can I assist you with your Mandi procurement today?",
-          source: data.source || (data.isLive ? "gemini" : "database_fallback"),
+          source: data.source || "gemini",
           model: data.model,
         },
       ]);
@@ -120,17 +100,10 @@ export default function AssistantPage() {
             <span>KRISHIDHENU Assistant</span>
           </div>
 
-          {lastSource === "gemini" || isLive === true ? (
-            <div className="flex items-center gap-1.5 text-[11px] text-emerald-800 font-semibold bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
-              <Sparkles size={12} className="text-emerald-600 animate-pulse" />
-              <span>Gemini AI Connected</span>
-            </div>
-          ) : (
-            <div className="flex items-center gap-1.5 text-[11px] text-amber-800 font-medium bg-amber-50 px-2.5 py-0.5 rounded-full border border-amber-200">
-              <Database size={12} className="text-amber-600" />
-              <span>Database Mode Active</span>
-            </div>
-          )}
+          <div className="flex items-center gap-1.5 text-[11px] text-emerald-800 font-semibold bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
+            <Sparkles size={12} className="text-emerald-600 animate-pulse" />
+            <span>Gemini AI Assistant</span>
+          </div>
         </div>
 
         {/* Message Thread */}
@@ -154,15 +127,20 @@ export default function AssistantPage() {
                 {/* Honest & Transparent Source Indicator */}
                 {m.role === "assistant" && (
                   <div className="mt-2 pt-1.5 border-t border-slate-100 flex items-center justify-between text-[11px]">
-                    {m.source === "gemini" ? (
+                    {m.source === "gemini_db" ? (
                       <span className="inline-flex items-center gap-1 text-emerald-700 font-medium">
                         <Sparkles size={11} className="text-emerald-600" />
-                        <span>Real Gemini AI ({m.model || "gemini-2.5-flash"})</span>
+                        <span>Gemini AI + Verified Database Data</span>
+                      </span>
+                    ) : m.source === "gemini" ? (
+                      <span className="inline-flex items-center gap-1 text-emerald-700 font-medium">
+                        <Sparkles size={11} className="text-emerald-600" />
+                        <span>Gemini AI</span>
                       </span>
                     ) : (
                       <span className="inline-flex items-center gap-1 text-amber-800 font-medium">
                         <Database size={11} className="text-amber-600" />
-                        <span>Verified Database Records</span>
+                        <span>Database Fallback</span>
                       </span>
                     )}
                   </div>
@@ -173,7 +151,7 @@ export default function AssistantPage() {
           {loading && (
             <div className="flex items-center gap-2 text-xs text-ink-faint pl-9">
               <span className="w-1.5 h-1.5 rounded-full bg-brand-600 animate-pulse-dot" />
-              <span>Assistant is retrieving response...</span>
+              <span>Gemini AI is generating response...</span>
             </div>
           )}
           <div ref={endRef} />

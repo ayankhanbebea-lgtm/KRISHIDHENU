@@ -69,6 +69,47 @@ export interface FarmerAssistantContext {
   }>;
 }
 
+/**
+ * Determines whether a farmer's message requires querying Turso database for
+ * personal context (e.g. token status, queue position, active booking, payment status).
+ * General questions (founder, what is KRISHIDHENU, general agriculture, MSP explanations)
+ * do not need database queries and are answered directly by Gemini AI.
+ */
+export function isApplicationSpecificQuery(message: string): boolean {
+  const m = message.toLowerCase().trim();
+
+  // 1. Explicit General Question Exclusions (Direct to Gemini AI)
+  // Founder / Creator queries
+  if (/\b(founder|creator|who (created|built|made|founded))\b/i.test(m)) {
+    return false;
+  }
+  // Platform overview queries
+  if (/what is (this platform|krishidhenu|krishi dhenu)/i.test(m) || /about krishidhenu/i.test(m)) {
+    return false;
+  }
+  // General MSP educational questions
+  if (/(explain|what is|meaning of|kya hai|samjhao|batao)\b.*\bmsp\b/i.test(m) || /\bmsp\b.*(kya|explain|meaning)/i.test(m)) {
+    return false;
+  }
+  // General greetings & small talk
+  if (/^(hello|hi|hey|namaste|namaskar|pranam|greetings|good (morning|afternoon|evening)|how are you|kaise ho|kya haal)/i.test(m) && m.length < 35) {
+    return false;
+  }
+
+  // 2. Personal / Application-Specific Keywords that require Database Context
+  const appPatterns = [
+    /\b(my|mera|meri|mere|apna|apni|mujhe)\b/i,
+    /\b(token|booking|slot|queue|position|baari|bari)\b/i,
+    /\b(payment|paisa|paise|amount|disbursement|bank|rupaye)\b/i,
+    /\b(centre|center|mandi)\b.*\b(time|timing|open|close|kahan|location)\b/i,
+    /\b(status|turn|wait|waiting|ahead|line)\b/i,
+    /\b(farmer code|profile|account details)\b/i,
+    /\b(टोकन|बुकिंग|स्लॉट|कतार|बारी|भुगतान|पैसे|खाता|मंडी समय)\b/,
+  ];
+
+  return appPatterns.some((pattern) => pattern.test(m));
+}
+
 export function generateIntelligentFarmerResponse(params: {
   message: string;
   context: FarmerAssistantContext;

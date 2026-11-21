@@ -4,7 +4,11 @@ import { getDb } from "@/lib/db";
 import { getFarmerProfileId } from "@/lib/farmer";
 import { farmersAhead, estimateWaitMinutes, currentlyServingToken } from "@/lib/services";
 import { detectLanguage } from "@/lib/language";
-import { generateIntelligentFarmerResponse, FarmerAssistantContext } from "@/lib/ai-assistant-engine";
+import {
+  generateIntelligentFarmerResponse,
+  FarmerAssistantContext,
+  isApplicationSpecificQuery,
+} from "@/lib/ai-assistant-engine";
 
 export const dynamic = "force-dynamic";
 
@@ -14,12 +18,15 @@ const CANDIDATE_MODELS = [
   process.env.GEMINI_MODEL,
   "gemini-3.5-flash-lite",
   "gemini-3.8-flash",
-  "gemini-3.5-flash",
+  "gemini-2.5-flash",
 ].filter((m): m is string => Boolean(m && m.trim()));
 
 const UNIQUE_MODELS = Array.from(new Set(CANDIDATE_MODELS));
 
-async function getFarmerContext(farmerId: string, sessionUser: { name: string; phone: string }): Promise<FarmerAssistantContext> {
+async function getFarmerContext(
+  farmerId: string,
+  sessionUser: { name: string; phone: string }
+): Promise<FarmerAssistantContext> {
   const db = getDb();
 
   // 1. Farmer Profile (supports either profile id or user id)
@@ -59,7 +66,10 @@ async function getFarmerContext(farmerId: string, sessionUser: { name: string; p
   // 3. Queue Real-time Metrics (if active booking exists)
   let queueMetrics = null;
   if (activeBooking && activeBooking.centreId && activeBooking.date) {
-    const ahead = activeBooking.position != null ? await farmersAhead(activeBooking.centreId, activeBooking.date, activeBooking.position) : 0;
+    const ahead =
+      activeBooking.position != null
+        ? await farmersAhead(activeBooking.centreId, activeBooking.date, activeBooking.position)
+        : 0;
     const waitMins = await estimateWaitMinutes(activeBooking.centreId, ahead);
     const serving = await currentlyServingToken(activeBooking.centreId, activeBooking.date);
     queueMetrics = {
@@ -90,7 +100,9 @@ async function getFarmerContext(farmerId: string, sessionUser: { name: string; p
   }
 
   // 5. Official MSP Rates in System
-  const cropsList = (await db.prepare(`SELECT name, code, msp_rate as mspRate FROM crops ORDER BY name`).all()) as any[];
+  const cropsList = (await db
+    .prepare(`SELECT name, code, msp_rate as mspRate FROM crops ORDER BY name`)
+    .all()) as any[];
 
   return {
     farmer: {
@@ -115,7 +127,7 @@ export async function GET(req: NextRequest) {
 
   const apiKey = (process.env.GEMINI_API_KEY || process.env.AI_PROVIDER_API_KEY || "").trim();
   const hasKey = Boolean(apiKey && !apiKey.startsWith("your_"));
-  const configuredModel = UNIQUE_MODELS[0] || "gemini-2.5-flash";
+  const configuredModel = UNIQUE_MODELS[0] || "gemini-3.5-flash-lite";
 
   let geminiDiagnostics = null;
   const wantDiagnostics = req.nextUrl.searchParams.get("diagnostics") === "1";
@@ -162,9 +174,8 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     status: hasKey ? "configured" : "unconfigured",
     hasKey,
-    keyPrefix: hasKey ? `${apiKey.substring(0, 4)}...` : null,
-    keyLength: apiKey.length,
-    keyType: apiKey.startsWith("AIzaSy") ? "google_ai_studio" : hasKey ? "non_standard_token" : "none",
+    isLive: hasKey,
+    engine: "gemini",
     model: configuredModel,
     defaultLanguage: "en",
     geminiDiagnostics,
@@ -193,65 +204,65 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Pull verified real-time database context for this farmer
-    const context = await getFarmerContext(farmerId, { name: session.name, phone: session.phone });
+    // 1. Detect if this query needs verified Turso database context
+    const needsDbContext = isApplicationSpecificQuery(message);
 
-    // Detect language of the incoming message
+    // 2. Query Turso ONLY when application-specific data is needed
+    let context: FarmerAssistantContext | null = null;
+    if (needsDbContext) {
+      try {
+        context = await getFarmerContext(farmerId, { name: session.name, phone: session.phone });
+      } catch (dbErr: any) {
+        console.warn("[Assistant] DB context lookup failed, continuing with Gemini general knowledge:", dbErr?.message);
+        context = null;
+      }
+    }
+
+    // Detect language of the incoming user message
     const detectedLanguage = detectLanguage(message);
-
     const apiKey = (process.env.GEMINI_API_KEY || process.env.AI_PROVIDER_API_KEY || "").trim();
 
-    // Track Gemini execution metrics
+    // 3. Build structured system prompt for Gemini
+    const systemPrompt = `You are "KRISHIDHENU AI Assistant", an empathetic, truthful, and intelligent agricultural assistant for Indian farmers using the KRISHIDHENU Digital Farmer Procurement & Smart Mandi Management Platform.
+
+PLATFORM & PROJECT KNOWLEDGE:
+- Platform Name: KRISHIDHENU (Smart Mandi & Digital Farmer Procurement Platform).
+- Founder & Creator: Ayan Khan.
+- What KRISHIDHENU does: It connects Indian farmers, Mandi staff, and administrators to streamline crop procurement at Minimum Support Price (MSP), eliminate physical mandi congestion with time-slotted digital tokens, provide transparent electronic weighing and quality grading, and ensure direct benefit transfer (DBT) bank payment tracking.
+- CRITICAL IDENTITY RULE: You are an AI assistant built for KRISHIDHENU; you are NOT the founder. If asked who the founder or creator of KRISHIDHENU is, state clearly that Ayan Khan is the founder and creator, and that you are the platform's AI assistant.
+- For unknown project-specific facts, state honestly that the information is not available rather than guessing or hallucinating.
+
+${
+  needsDbContext && context
+    ? `=== VERIFIED TURSO DATABASE CONTEXT FOR THIS LOGGED-IN FARMER ===
+${JSON.stringify(context, null, 2)}
+===================================================================
+STRICT OPERATIONAL RULES FOR APPLICATION DATA:
+- For questions regarding this farmer's token number, slot date, queue position, estimated wait time, Mandi centre, and payment status, use EXCLUSIVELY the verified data provided in the database context above.
+- NEVER invent or guess token numbers, queue positions, payment amounts, or dates.
+- If the farmer has no active booking, inform them politely that they currently have no active token and can book one anytime on their dashboard.`
+    : `NOTE: This is a general query (or general agricultural question). Answer directly using your agricultural, economic, and platform knowledge. Do not reference personal farmer records unless asked.`
+}
+
+LANGUAGE & CONVERSATION RULES:
+- Detect the language of the user's latest message and reply in that same language:
+  * English user message -> Reply in English.
+  * Hindi user message (Devanagari or Hindi) -> Reply in natural, clear Hindi (Devanagari script).
+  * Hinglish user message (Hindi written in Roman/English alphabet) -> Reply in natural Hinglish.
+- If the user explicitly requests a language (e.g. "Explain MSP in simple Hindi"), strictly follow their language instruction.
+- Address the farmer respectfully: "Greetings [Name]" in English, "नमस्ते [Name] जी" in Hindi, or "Namaste [Name] ji" in Hinglish.
+- Keep answers clear, supportive, and concise. Avoid dense walls of text; use bullet points where helpful.`;
+
     let liveGeminiReply: string | null = null;
-    let successfulModel: string = UNIQUE_MODELS[0] || "gemini-2.5-flash";
+    let successfulModel: string = UNIQUE_MODELS[0] || "gemini-3.5-flash-lite";
     let lastStatus = 0;
     let lastReason = "";
     let lastErrorMessage = "";
     let responseTimeMs = 0;
     const startTime = Date.now();
 
-    // 1. PATH A: REAL GEMINI AI REQUEST
-    // Only attempt if an API key is configured
+    // 4. PRIMARY ENGINE: REAL GEMINI API REQUEST
     if (apiKey && !apiKey.startsWith("your_")) {
-      const systemPrompt = `You are "KRISHIDHENU AI Assistant", an empathetic, truthful, and intelligent agricultural assistant for Indian farmers using the KRISHIDHENU Digital Farmer Procurement & Smart Mandi Management Platform.
-
-=== VERIFIED REAL-TIME DATABASE CONTEXT FOR THIS LOGGED-IN FARMER ===
-${JSON.stringify(context, null, 2)}
-=====================================================================
-
-Language Selection Rules:
-- Default response language: English.
-- Detect the language of the user's latest message.
-- English input → English response.
-- Hindi input → Hindi response in Devanagari script.
-- Hinglish input → Hinglish response in Roman script.
-- Always follow the language of the latest user message.
-- Never switch languages without a clear reason.
-- Keep responses simple, natural, helpful and easy for farmers to understand.
-
-[Language Detection for Current Message]: ${detectedLanguage.toUpperCase()} (Respond strictly in this language).
-
-STRICT OPERATIONAL RULES:
-1. TRUTHFULNESS & ZERO HALLUCINATION:
-   - For all questions regarding the farmer's token number, slot date, queue position, estimated wait time, Mandi centre location, and payment status, use EXCLUSIVELY the verified data provided in the database context above.
-   - NEVER invent or guess token numbers, queue positions, payment amounts, or dates.
-   - If the farmer has no active booking, inform them politely:
-     * English: "You do not currently have an active procurement token. You can book a slot anytime using the 'Book Slot' option on your dashboard."
-     * Hindi: "आपके पास अभी कोई सक्रिय टोकन नहीं है। आप डैशबोर्ड पर 'Book Slot' विकल्प से नया स्लॉट बुक कर सकते हैं।"
-     * Hinglish: "Aapke paas abhi koi active token nahi hai. Aap dashboard par 'Book Slot' option use karke naya slot book kar sakte hain."
-
-2. DISTINGUISHING VERIFIED DATA VS GENERAL PROCUREMENT GUIDELINES:
-   - When asked about their specific booking or token, cite the exact numbers from the context.
-   - When asked about official MSP rates or quality standards:
-     * Official CACP/FCI standards: Moisture limit is 12.0%. Between 12.1% - 14.0%, proportional value deduction applies. Over 14.0%, grain requires sun-drying.
-     * Fair assessment: Quality deductions are calculated transparently on the portal; staff cannot levy arbitrary cash cuts.
-     * Farmer rights: If a farmer disputes a moisture reading, they have the statutory right to request a second sample test before signing the receipt.
-     * Document checklist: Remind farmers to carry Aadhaar Card, Bank Passbook / Account details, and Land Girdawari / Jamabandi copy.
-
-3. TONE & BREVITY:
-   - Address the farmer respectfully: "Greetings [Name]" in English, "नमस्ते [Name] जी" in Hindi, or "Namaste [Name] ji" in Hinglish.
-   - Keep answers clear, supportive, and concise. Avoid dense walls of text; use bullet points where helpful.`;
-
       for (const modelToTry of UNIQUE_MODELS) {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 12000);
@@ -293,21 +304,24 @@ STRICT OPERATIONAL RULES:
             if (candidateText && candidateText.trim()) {
               liveGeminiReply = candidateText.trim();
               successfulModel = modelToTry;
-              break;
+              break; // Success! Exit loop
             }
           } else {
             const errJson = await response.json().catch(() => ({}));
             lastReason = errJson?.error?.details?.[0]?.reason || errJson?.error?.status || "API_ERROR";
             lastErrorMessage = errJson?.error?.message || response.statusText || `HTTP ${response.status}`;
-            console.warn(`[Gemini API] Model ${modelToTry} failed: HTTP ${response.status} (${lastReason}: ${lastErrorMessage})`);
-            break;
+            console.warn(`[Gemini API] Model ${modelToTry} attempt failed: HTTP ${response.status} (${lastReason})`);
+            // Try next candidate model
+            continue;
           }
         } catch (err: any) {
           clearTimeout(timeout);
           responseTimeMs = Date.now() - startTime;
           lastStatus = err?.name === "AbortError" ? 504 : 500;
           lastReason = err?.name === "AbortError" ? "TIMEOUT" : "NETWORK_ERROR";
-          lastErrorMessage = err?.message || "Network exception";
+          lastErrorMessage = err?.name === "AbortError" ? "Request timed out" : "Network exception";
+          // Try next candidate model
+          continue;
         }
       }
     } else {
@@ -316,11 +330,11 @@ STRICT OPERATIONAL RULES:
       lastErrorMessage = "GEMINI_API_KEY environment variable is not configured.";
     }
 
-    // If Gemini succeeded, return genuine REAL Gemini AI response
+    // 5. SUCCESS: Return Genuine Gemini AI Response
     if (liveGeminiReply) {
       return NextResponse.json({
         reply: liveGeminiReply,
-        source: "gemini",
+        source: needsDbContext && context ? "gemini_db" : "gemini",
         isLive: true,
         model: successfulModel,
         responseTimeMs,
@@ -328,32 +342,44 @@ STRICT OPERATIONAL RULES:
       });
     }
 
-    // 2. PATH B: DATABASE FALLBACK
-    // Used ONLY when Gemini is unavailable or failed (e.g. 401, quota, or network).
-    // Answers farmer questions accurately using verified database records.
-    // Clearly identified as "database_fallback" (NEVER labeled as Gemini AI).
-    const fallbackReply = generateIntelligentFarmerResponse({
-      message,
-      context,
-      language: detectedLanguage,
-      sessionName: session.name,
-    });
+    // 6. EMERGENCY FALLBACK
+    // Gemini API failed across all attempts.
+    // If it was an application-specific query and we have valid Turso database records,
+    // invoke the deterministic engine as an EMERGENCY FALLBACK only.
+    if (needsDbContext && context) {
+      console.warn(`[Assistant] Gemini unavailable (${lastReason}). Using emergency database fallback for application query.`);
+      const fallbackReply = generateIntelligentFarmerResponse({
+        message,
+        context,
+        language: detectedLanguage,
+        sessionName: session.name,
+      });
 
-    return NextResponse.json({
-      reply: fallbackReply,
-      source: "database_fallback",
-      isLive: false,
-      model: "database-fallback",
-      responseTimeMs: responseTimeMs || (Date.now() - startTime),
-      geminiDiagnostics: {
-        httpStatus: lastStatus,
-        reason: lastReason,
-        errorMessage: lastErrorMessage,
-        modelAttempted: UNIQUE_MODELS[0] || "gemini-2.5-flash",
+      return NextResponse.json({
+        reply: fallbackReply,
+        source: "database_fallback",
+        isLive: false,
+        model: "database-fallback",
+        responseTimeMs: responseTimeMs || (Date.now() - startTime),
+        language: detectedLanguage,
+      });
+    }
+
+    // For general queries (or when context is unavailable), show a clear AI connection error
+    return NextResponse.json(
+      {
+        error: "Gemini AI Assistant is temporarily unavailable. Please check your internet connection or try again shortly.",
+        source: "error",
+        isLive: false,
+        diagnostics: {
+          status: lastStatus,
+          reason: lastReason,
+        },
       },
-      language: detectedLanguage,
-    });
+      { status: 503 }
+    );
   } catch (error: any) {
+    console.error("[Assistant] Unexpected handler error:", error?.message);
     return NextResponse.json(
       { error: "An unexpected error occurred. Please try again." },
       { status: 500 }
