@@ -38,7 +38,7 @@ export default function StaffDashboard() {
   const [skipConfirm, setSkipConfirm] = useState<any>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [showCompleted, setShowCompleted] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [pendingActionKey, setPendingActionKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [newBookingNotice, setNewBookingNotice] = useState<{ token: string; date?: string; centreId?: string } | null>(null);
 
@@ -47,6 +47,7 @@ export default function StaffDashboard() {
   const selectedCentreIdRef = useRef<string>("");
   const latestReqIdRef = useRef<number>(0);
   const inFlightRef = useRef<boolean>(false);
+  const pendingReloadRef = useRef<boolean>(false);
 
   // Synchronize ref values with active state
   useEffect(() => {
@@ -62,7 +63,8 @@ export default function StaffDashboard() {
       if (isInitial) {
         setLoading(true);
       } else if (inFlightRef.current) {
-        // Prevent overlapping background polls from racing or clobbering state
+        // Queue this reload so it runs immediately when the in-flight poll finishes
+        pendingReloadRef.current = true;
         return;
       }
 
@@ -141,6 +143,10 @@ export default function StaffDashboard() {
       } finally {
         inFlightRef.current = false;
         if (isInitial) setLoading(false);
+        if (pendingReloadRef.current) {
+          pendingReloadRef.current = false;
+          load(false, selectedDateRef.current, selectedCentreIdRef.current);
+        }
       }
     },
     [setLang]
@@ -198,7 +204,8 @@ export default function StaffDashboard() {
   }
 
   async function callNext() {
-    setBusy(true);
+    if (pendingActionKey) return;
+    setPendingActionKey("CALL_NEXT");
     setError("");
     try {
       const res = await fetch("/api/staff/actions", {
@@ -215,16 +222,24 @@ export default function StaffDashboard() {
         setError(d.error || "Failed to call next farmer.");
         return;
       }
+      if (d.token) {
+        setData((prev: any) => {
+          if (!prev) return prev;
+          return { ...prev, serving: d.token };
+        });
+      }
       load(false, selectedDateRef.current, selectedCentreIdRef.current);
     } catch {
       setError("Network error calling next farmer.");
     } finally {
-      setBusy(false);
+      setPendingActionKey(null);
     }
   }
 
   async function doAction(bookingId: string, action: string, extra: any = {}) {
-    setBusy(true);
+    const actionKey = `${bookingId}_${action}`;
+    if (pendingActionKey === actionKey) return;
+    setPendingActionKey(actionKey);
     setError("");
     try {
       const res = await fetch("/api/staff/actions", {
@@ -245,11 +260,61 @@ export default function StaffDashboard() {
       setWeighModal(null);
       setNoShowConfirm(null);
       setSkipConfirm(null);
+
+      // Server confirmed 200 OK: immediately reflect updated status in local state
+      const targetStatus = d.status || (
+        action === "MARK_ARRIVED" ? "ARRIVED" :
+        action === "START_WEIGHING" ? "WEIGHING" :
+        action === "COMPLETE_PROCUREMENT" ? "PROCUREMENT_COMPLETED" :
+        action === "SKIP" ? "ARRIVED" :
+        action === "MARK_NO_SHOW" ? "NO_SHOW" : action
+      );
+
+      setData((prev: any) => {
+        if (!prev || !prev.rows) return prev;
+        const updatedRows = prev.rows.map((r: any) => {
+          if (r.id !== bookingId) return r;
+          const updated = { ...r, status: targetStatus };
+          if (action === "COMPLETE_PROCUREMENT") {
+            if (extra.actualQuantity != null) updated.actualQuantity = extra.actualQuantity;
+            if (extra.ratePerUnit != null) updated.ratePerUnit = extra.ratePerUnit;
+            const rate = extra.ratePerUnit || 2275;
+            const deductions = extra.deductions || 0;
+            const finalAmt = Math.max(0, Math.round(((extra.actualQuantity * rate) - deductions) * 100) / 100);
+            updated.paymentAmount = finalAmt;
+            updated.paymentStatus = "BANK_DETAILS_REQUIRED";
+          }
+          return updated;
+        });
+
+        const waiting = updatedRows.filter((r: any) => r.status === "BOOKED").length;
+        const inProgress = updatedRows.filter((r: any) =>
+          ["ARRIVED", "VERIFIED", "WEIGHING", "PROCUREMENT_IN_PROGRESS"].includes(r.status)
+        ).length;
+        const completed = updatedRows.filter((r: any) =>
+          ["PROCUREMENT_COMPLETED", "PAYMENT_PROCESSING", "PAYMENT_COMPLETED"].includes(r.status)
+        ).length;
+        const paymentPending = updatedRows.filter((r: any) => r.paymentStatus && r.paymentStatus !== "PAID").length;
+
+        return {
+          ...prev,
+          rows: updatedRows,
+          summary: {
+            ...prev.summary,
+            waiting,
+            inProgress,
+            completed,
+            paymentPending,
+          },
+        };
+      });
+
+      // Background authoritative reload
       load(false, selectedDateRef.current, selectedCentreIdRef.current);
     } catch {
       setError("Network error performing action.");
     } finally {
-      setBusy(false);
+      setPendingActionKey(null);
     }
   }
 
@@ -406,7 +471,7 @@ export default function StaffDashboard() {
               className="btn-ghost !py-1.5 !px-2.5 text-xs inline-flex items-center gap-1 text-ink-soft"
               title={t("sync")}
             >
-              <RefreshCw size={13} className={busy ? "animate-spin" : ""} /> {t("sync")}
+              <RefreshCw size={13} className={loading || pendingActionKey ? "animate-spin" : ""} /> {t("sync")}
             </button>
           </div>
         </div>
@@ -547,21 +612,35 @@ export default function StaffDashboard() {
                   <div className="flex flex-wrap gap-2 pt-2">
                     {servingRow.status === "BOOKED" && (
                       <button
-                        disabled={busy}
+                        disabled={pendingActionKey === `${servingRow.id}_MARK_ARRIVED`}
                         onClick={() => doAction(servingRow.id, "MARK_ARRIVED")}
                         className="btn-primary flex-1 text-xs !py-2.5 font-bold"
                       >
-                        {t("markArrived")}
+                        {pendingActionKey === `${servingRow.id}_MARK_ARRIVED` ? (
+                          <span className="inline-flex items-center gap-1.5 justify-center">
+                            <RefreshCw size={12} className="animate-spin" /> Arriving...
+                          </span>
+                        ) : (
+                          t("markArrived")
+                        )}
                       </button>
                     )}
 
                     {(servingRow.status === "ARRIVED" || servingRow.status === "VERIFIED") && (
                       <button
-                        disabled={busy}
+                        disabled={pendingActionKey === `${servingRow.id}_START_WEIGHING`}
                         onClick={() => doAction(servingRow.id, "START_WEIGHING")}
                         className="btn-primary flex-1 text-xs !py-2.5 font-bold inline-flex items-center justify-center gap-1.5"
                       >
-                        <Scale size={14} /> {t("startWeighing")}
+                        {pendingActionKey === `${servingRow.id}_START_WEIGHING` ? (
+                          <span className="inline-flex items-center gap-1.5 justify-center">
+                            <RefreshCw size={12} className="animate-spin" /> Starting...
+                          </span>
+                        ) : (
+                          <>
+                            <Scale size={14} /> {t("startWeighing")}
+                          </>
+                        )}
                       </button>
                     )}
 
@@ -592,7 +671,7 @@ export default function StaffDashboard() {
                     )}
 
                     <button
-                      disabled={busy}
+                      disabled={pendingActionKey === `${servingRow.id}_MARK_NO_SHOW`}
                       onClick={() => setNoShowConfirm(servingRow)}
                       className="btn-secondary text-xs text-rose-600 hover:text-rose-700 !py-2.5 !px-3"
                       title={t("noShow")}
@@ -613,9 +692,15 @@ export default function StaffDashboard() {
               <button
                 onClick={callNext}
                 className="btn-primary w-full !py-3 font-bold shadow-sm inline-flex items-center justify-center gap-2 text-sm"
-                disabled={busy}
+                disabled={pendingActionKey === "CALL_NEXT"}
               >
-                {t("callNextFarmer")}
+                {pendingActionKey === "CALL_NEXT" ? (
+                  <span className="inline-flex items-center gap-2 justify-center">
+                    <RefreshCw size={14} className="animate-spin" /> Calling Next Farmer...
+                  </span>
+                ) : (
+                  t("callNextFarmer")
+                )}
               </button>
 
               {nextUp.length > 0 && (
@@ -690,20 +775,32 @@ export default function StaffDashboard() {
                       <td className="py-3 px-4 text-right space-x-1.5 whitespace-nowrap">
                         {r.status === "BOOKED" && (
                           <button
-                            disabled={busy}
+                            disabled={pendingActionKey === `${r.id}_MARK_ARRIVED`}
                             onClick={() => doAction(r.id, "MARK_ARRIVED")}
                             className="btn-primary !py-1 !px-2.5 text-xs font-semibold"
                           >
-                            {t("markArrived")}
+                            {pendingActionKey === `${r.id}_MARK_ARRIVED` ? (
+                              <span className="inline-flex items-center gap-1">
+                                <RefreshCw size={11} className="animate-spin" /> Arriving...
+                              </span>
+                            ) : (
+                              t("markArrived")
+                            )}
                           </button>
                         )}
                         {(r.status === "ARRIVED" || r.status === "VERIFIED") && (
                           <button
-                            disabled={busy}
+                            disabled={pendingActionKey === `${r.id}_START_WEIGHING`}
                             onClick={() => doAction(r.id, "START_WEIGHING")}
                             className="btn-primary !py-1 !px-2.5 text-xs font-semibold"
                           >
-                            {t("startWeighing")}
+                            {pendingActionKey === `${r.id}_START_WEIGHING` ? (
+                              <span className="inline-flex items-center gap-1">
+                                <RefreshCw size={11} className="animate-spin" /> Starting...
+                              </span>
+                            ) : (
+                              t("startWeighing")
+                            )}
                           </button>
                         )}
                         {r.status === "WEIGHING" && (
@@ -721,20 +818,32 @@ export default function StaffDashboard() {
                           </button>
                         )}
                         <button
-                          disabled={busy}
+                          disabled={pendingActionKey === `${r.id}_SKIP`}
                           onClick={() => setSkipConfirm(r)}
                           className="btn-secondary !py-1 !px-2 text-xs text-amber-700 hover:text-amber-800"
                           title={t("skipFarmer")}
                         >
-                          {t("skipFarmer")}
+                          {pendingActionKey === `${r.id}_SKIP` ? (
+                            <span className="inline-flex items-center gap-1">
+                              <RefreshCw size={11} className="animate-spin" />
+                            </span>
+                          ) : (
+                            t("skipFarmer")
+                          )}
                         </button>
                         <button
-                          disabled={busy}
+                          disabled={pendingActionKey === `${r.id}_MARK_NO_SHOW`}
                           onClick={() => setNoShowConfirm(r)}
                           className="btn-secondary !py-1 !px-2 text-xs text-rose-600 hover:text-rose-700"
                           title={t("noShow")}
                         >
-                          {t("noShow")}
+                          {pendingActionKey === `${r.id}_MARK_NO_SHOW` ? (
+                            <span className="inline-flex items-center gap-1">
+                              <RefreshCw size={11} className="animate-spin" />
+                            </span>
+                          ) : (
+                            t("noShow")
+                          )}
                         </button>
                       </td>
                     </tr>
@@ -933,7 +1042,13 @@ export default function StaffDashboard() {
 
             <button
               className="btn-primary w-full font-bold !py-3 text-xs shadow-sm"
-              disabled={busy || !actualQty || Number(actualQty) <= 0 || !ratePerUnit || Number(ratePerUnit) <= 0}
+              disabled={
+                pendingActionKey === `${weighModal.id}_COMPLETE_PROCUREMENT` ||
+                !actualQty ||
+                Number(actualQty) <= 0 ||
+                !ratePerUnit ||
+                Number(ratePerUnit) <= 0
+              }
               onClick={() =>
                 doAction(weighModal.id, "COMPLETE_PROCUREMENT", {
                   actualQuantity: Number(actualQty),
@@ -944,7 +1059,13 @@ export default function StaffDashboard() {
                 })
               }
             >
-              {t("confirmProcurementComplete")}
+              {pendingActionKey === `${weighModal.id}_COMPLETE_PROCUREMENT` ? (
+                <span className="inline-flex items-center gap-1.5 justify-center">
+                  <RefreshCw size={14} className="animate-spin" /> Saving & Completing...
+                </span>
+              ) : (
+                t("confirmProcurementComplete")
+              )}
             </button>
           </div>
         </Modal>
@@ -964,9 +1085,15 @@ export default function StaffDashboard() {
               type="button"
               onClick={() => doAction(skipConfirm.id, "SKIP")}
               className="btn-secondary flex-1 text-xs !py-2 font-bold text-amber-700"
-              disabled={busy}
+              disabled={pendingActionKey === `${skipConfirm.id}_SKIP`}
             >
-              {t("yesSkip")}
+              {pendingActionKey === `${skipConfirm.id}_SKIP` ? (
+                <span className="inline-flex items-center gap-1 justify-center">
+                  <RefreshCw size={12} className="animate-spin" /> Skipping...
+                </span>
+              ) : (
+                t("yesSkip")
+              )}
             </button>
           </div>
         </Modal>
@@ -986,9 +1113,15 @@ export default function StaffDashboard() {
               type="button"
               onClick={() => doAction(noShowConfirm.id, "MARK_NO_SHOW")}
               className="btn-danger flex-1 text-xs !py-2 font-bold"
-              disabled={busy}
+              disabled={pendingActionKey === `${noShowConfirm.id}_MARK_NO_SHOW`}
             >
-              {t("confirmNoShow")}
+              {pendingActionKey === `${noShowConfirm.id}_MARK_NO_SHOW` ? (
+                <span className="inline-flex items-center gap-1 justify-center">
+                  <RefreshCw size={12} className="animate-spin" /> Marking No-Show...
+                </span>
+              ) : (
+                t("confirmNoShow")
+              )}
             </button>
           </div>
         </Modal>

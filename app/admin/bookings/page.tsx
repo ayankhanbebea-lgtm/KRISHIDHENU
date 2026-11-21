@@ -5,7 +5,7 @@ import DashboardShell from "@/components/DashboardShell";
 import { ADMIN_LINKS } from "@/lib/nav";
 import { CardSkeleton } from "@/components/Skeleton";
 import StatusBadge from "@/components/StatusBadge";
-import { CalendarDays, Filter, Phone, Ban, X, AlertTriangle } from "lucide-react";
+import { CalendarDays, Filter, Phone, Ban, X, AlertTriangle, RefreshCw } from "lucide-react";
 
 interface BookingItem {
   id: string;
@@ -58,6 +58,7 @@ export default function AdminBookingsPage() {
   const [error, setError] = useState("");
 
   const inFlightRef = useRef(false);
+  const pendingReloadRef = useRef(false);
   const latestReqIdRef = useRef(0);
   const filtersRef = useRef({ filterDate, filterCentre, filterStatus });
 
@@ -66,7 +67,10 @@ export default function AdminBookingsPage() {
   }, [filterDate, filterCentre, filterStatus]);
 
   const fetchBookings = useCallback(async (isInitial = false) => {
-    if (inFlightRef.current && !isInitial) return;
+    if (inFlightRef.current && !isInitial) {
+      pendingReloadRef.current = true;
+      return;
+    }
     inFlightRef.current = true;
     const reqId = ++latestReqIdRef.current;
     const timestamp = new Date().toISOString();
@@ -98,6 +102,10 @@ export default function AdminBookingsPage() {
       }
     } finally {
       inFlightRef.current = false;
+      if (pendingReloadRef.current) {
+        pendingReloadRef.current = false;
+        fetchBookings(false);
+      }
     }
   }, []);
 
@@ -149,6 +157,7 @@ export default function AdminBookingsPage() {
 
   async function handleConfirmCancel() {
     if (!cancellingBooking) return;
+    const targetId = cancellingBooking.id;
     setCancelLoading(true);
     setError("");
 
@@ -156,15 +165,20 @@ export default function AdminBookingsPage() {
       const res = await fetch("/api/admin/bookings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "CANCEL", bookingId: cancellingBooking.id }),
+        body: JSON.stringify({ action: "CANCEL", bookingId: targetId }),
       });
       const data = await res.json();
       if (!res.ok) {
         setError(data.error || "Failed to cancel booking");
         return;
       }
+
+      // Confirmed 200 OK: immediately update local state
+      setBookings((prev) =>
+        prev ? prev.map((b) => (b.id === targetId ? { ...b, status: "CANCELLED" } : b)) : prev
+      );
       setCancellingBooking(null);
-      await fetchBookings();
+      fetchBookings(false);
     } catch {
       setError("An unexpected error occurred.");
     } finally {
@@ -359,7 +373,13 @@ export default function AdminBookingsPage() {
                 className="btn-primary !bg-rose-600 hover:!bg-rose-700"
                 disabled={cancelLoading}
               >
-                {cancelLoading ? "Cancelling..." : "Yes, Cancel Booking"}
+                {cancelLoading ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <RefreshCw size={13} className="animate-spin" /> Cancelling...
+                  </span>
+                ) : (
+                  "Yes, Cancel Booking"
+                )}
               </button>
             </div>
           </div>

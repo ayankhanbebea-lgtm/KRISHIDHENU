@@ -32,6 +32,9 @@ const RESULT_STATUS: Record<string, string> = {
   MARK_NO_SHOW: "NO_SHOW",
 };
 
+// In-memory debounce guard to prevent double-clicks on CALL_NEXT
+const lastCallNextByCentre = new Map<string, { time: number; result: any }>();
+
 export async function POST(req: NextRequest) {
   const session = await getSession();
   if (!session || session.role !== "STAFF") {
@@ -51,6 +54,13 @@ export async function POST(req: NextRequest) {
   if (!centre) return NextResponse.json({ error: "No centre assigned to this staff account." }, { status: 404 });
 
   if (body?.action === "CALL_NEXT") {
+    // Prevent accidental rapid double-clicks from calling two consecutive farmers
+    const now = Date.now();
+    const lastCall = lastCallNextByCentre.get(centre.id);
+    if (lastCall && (now - lastCall.time) < 1200) {
+      return NextResponse.json(lastCall.result);
+    }
+
     const targetDate = body?.date && body.date !== "all" ? normalizeDateToYMD(body.date) : null;
 
     // Single source of truth query: Select first eligible waiting farmer
@@ -128,7 +138,9 @@ export async function POST(req: NextRequest) {
       status: "CALLED",
     });
 
-    return NextResponse.json({ ok: true, bookingId: next.bookingId, token: next.token });
+    const result = { ok: true, bookingId: next.bookingId, token: next.token };
+    lastCallNextByCentre.set(centre.id, { time: Date.now(), result });
+    return NextResponse.json(result);
   }
 
   const parsed = staffActionSchema.safeParse(body);
@@ -144,6 +156,12 @@ export async function POST(req: NextRequest) {
   if (!booking) return NextResponse.json({ error: "Booking not found." }, { status: 404 });
   if (booking.centreId !== centre.id) {
     return NextResponse.json({ error: "This booking does not belong to your centre." }, { status: 403 });
+  }
+
+  const newStatus = RESULT_STATUS[action] || action;
+
+  if (booking.status === newStatus) {
+    return NextResponse.json({ ok: true, status: newStatus, alreadyApplied: true });
   }
 
   const allowedFrom = TRANSITIONS[action];
@@ -166,8 +184,6 @@ export async function POST(req: NextRequest) {
        WHERE b.id = ?`
     )
     .get(bookingId)) as any;
-
-  const newStatus = RESULT_STATUS[action] || action;
 
   try {
     if (action === "COMPLETE_PROCUREMENT") {

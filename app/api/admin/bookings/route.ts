@@ -32,31 +32,33 @@ export async function GET(req: NextRequest) {
 
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
-  const bookings = await db.prepare(`
-    SELECT b.id, b.token, b.status, b.quantity_quintal as quantityQuintal, b.actual_quantity as actualQuantity,
-           b.created_at as createdAt, u.name as farmerName, u.phone as farmerPhone,
-           c.name as centreName, cr.name as cropName, s.date, s.start_time as startTime,
-           COALESCE(p.payment_status, p.status) as paymentStatus,
-           COALESCE(p.total_amount, p.amount) as paymentAmount,
-           q.position as queuePosition
-    FROM bookings b
-    JOIN farmer_profiles fp ON b.farmer_id = fp.id
-    JOIN users u ON fp.user_id = u.id
-    JOIN procurement_centres c ON b.centre_id = c.id
-    JOIN crops cr ON b.crop_id = cr.id
-    JOIN slots s ON b.slot_id = s.id
-    LEFT JOIN payments p ON p.booking_id = b.id
-    LEFT JOIN queue_entries q ON q.booking_id = b.id
-    ${where}
-    ORDER BY b.created_at DESC
-    LIMIT ? OFFSET ?
-  `).all(...vals, limit, offset);
+  const [bookings, totalRow] = await Promise.all([
+    db.prepare(`
+      SELECT b.id, b.token, b.status, b.quantity_quintal as quantityQuintal, b.actual_quantity as actualQuantity,
+             b.created_at as createdAt, u.name as farmerName, u.phone as farmerPhone,
+             c.name as centreName, cr.name as cropName, s.date, s.start_time as startTime,
+             COALESCE(p.payment_status, p.status) as paymentStatus,
+             COALESCE(p.total_amount, p.amount) as paymentAmount,
+             q.position as queuePosition
+      FROM bookings b
+      JOIN farmer_profiles fp ON b.farmer_id = fp.id
+      JOIN users u ON fp.user_id = u.id
+      JOIN procurement_centres c ON b.centre_id = c.id
+      JOIN crops cr ON b.crop_id = cr.id
+      JOIN slots s ON b.slot_id = s.id
+      LEFT JOIN payments p ON p.booking_id = b.id
+      LEFT JOIN queue_entries q ON q.booking_id = b.id
+      ${where}
+      ORDER BY b.created_at DESC
+      LIMIT ? OFFSET ?
+    `).all(...vals, limit, offset) as Promise<any[]>,
+    db.prepare(`
+      SELECT COUNT(*) as c FROM bookings b
+      JOIN slots s ON b.slot_id = s.id
+      ${where}
+    `).get(...vals) as Promise<{ c: number } | undefined>,
+  ]);
 
-  const totalRow = (await db.prepare(`
-    SELECT COUNT(*) as c FROM bookings b
-    JOIN slots s ON b.slot_id = s.id
-    ${where}
-  `).get(...vals)) as { c: number } | undefined;
   const total = totalRow?.c ?? 0;
 
   const duration = Date.now() - reqStart;
@@ -81,8 +83,11 @@ export async function POST(req: NextRequest) {
   const db = getDb();
   const booking = (await db.prepare(`SELECT id, status, token, farmer_id as farmerId FROM bookings WHERE id = ?`).get(body.bookingId)) as any;
   if (!booking) return NextResponse.json({ error: "Booking not found" }, { status: 404 });
-  if (["PAYMENT_COMPLETED", "CANCELLED"].includes(booking.status)) {
-    return NextResponse.json({ error: `Cannot cancel a ${booking.status} booking` }, { status: 409 });
+  if (booking.status === "CANCELLED") {
+    return NextResponse.json({ ok: true, status: "CANCELLED", alreadyApplied: true });
+  }
+  if (booking.status === "PAYMENT_COMPLETED") {
+    return NextResponse.json({ error: "Cannot cancel a booking with completed payment." }, { status: 409 });
   }
   await db.prepare(`UPDATE bookings SET status = 'CANCELLED', updated_at = ? WHERE id = ?`).run(nowIso(), body.bookingId);
   // Get farmer user_id for notification

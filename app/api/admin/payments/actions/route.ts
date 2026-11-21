@@ -43,6 +43,9 @@ export async function POST(req: NextRequest) {
   const currentStatus = payment.paymentStatus;
 
   if (action === "START_PROCESSING") {
+    if (currentStatus === "PROCESSING") {
+      return NextResponse.json({ ok: true, status: "PROCESSING", alreadyApplied: true });
+    }
     if (currentStatus !== "BANK_DETAILS_SUBMITTED" && currentStatus !== "PENDING" && currentStatus !== "ON_HOLD") {
       return NextResponse.json({ error: `Cannot start processing a payment with status '${currentStatus}'.` }, { status: 409 });
     }
@@ -96,6 +99,9 @@ export async function POST(req: NextRequest) {
   }
 
   if (action === "MARK_PAID") {
+    if (currentStatus === "PAID") {
+      return NextResponse.json({ ok: true, status: "PAID", alreadyApplied: true });
+    }
     const txnRef = (parsed.data.transactionReference || transactionId || "").trim();
     if (!txnRef) {
       return NextResponse.json({ error: "Transaction / Reference ID is mandatory to mark payment as Paid." }, { status: 400 });

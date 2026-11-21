@@ -325,58 +325,59 @@ export async function cancelBooking(bookingId: string, farmerId: string, session
 // ---------- Waiting time / congestion insight for admin (from real database data) ----------
 export async function adminOverview() {
   const db = getDb();
-  const totalFarmers = ((await db.prepare(`SELECT COUNT(*) as c FROM users WHERE role = 'FARMER'`).get()) as { c: number })?.c ?? 0;
-  const totalStaff = ((await db.prepare(`SELECT COUNT(*) as c FROM users WHERE role = 'STAFF'`).get()) as { c: number })?.c ?? 0;
-  const totalCentres = ((await db.prepare(`SELECT COUNT(*) as c FROM procurement_centres`).get()) as { c: number })?.c ?? 0;
   const today = getTodayIST();
   await ensureSlotsForDate(today);
 
-  const todaysBookings = (
-    (await db.prepare(`SELECT COUNT(*) as c FROM slots s JOIN bookings b ON b.slot_id = s.id WHERE s.date = ? AND b.status != 'CANCELLED'`).get(today)) as {
-      c: number;
-    }
-  )?.c ?? 0;
-  const activeQueues = (
-    (await db
-      .prepare(
-        `SELECT COUNT(*) as c FROM queue_entries q JOIN bookings b ON q.booking_id = b.id
-         WHERE q.date = ? AND b.status NOT IN ('PROCUREMENT_COMPLETED','PAYMENT_PROCESSING','PAYMENT_COMPLETED','CANCELLED','NO_SHOW')`
-      )
-      .get(today)) as { c: number }
-  )?.c ?? 0;
-  const completed = (
-    (await db.prepare(`SELECT COUNT(*) as c FROM bookings WHERE status IN ('PROCUREMENT_COMPLETED','PAYMENT_PROCESSING','PAYMENT_COMPLETED')`).get()) as {
-      c: number;
-    }
-  )?.c ?? 0;
-  const pendingPayments = (
-    (await db.prepare(`SELECT COUNT(*) as c FROM payments WHERE payment_status IN ('PENDING','PROCESSING') OR status IN ('PENDING','PROCESSING')`).get()) as { c: number }
-  )?.c ?? 0;
-  const cancelled = ((await db.prepare(`SELECT COUNT(*) as c FROM bookings WHERE status IN ('CANCELLED','NO_SHOW')`).get()) as {
-    c: number;
-  })?.c ?? 0;
-  const totalBookings = ((await db.prepare(`SELECT COUNT(*) as c FROM bookings`).get()) as { c: number })?.c ?? 0;
+  const [
+    totalFarmersRow,
+    totalStaffRow,
+    totalCentresRow,
+    todaysBookingsRow,
+    activeQueuesRow,
+    completedRow,
+    pendingPaymentsRow,
+    cancelledRow,
+    totalBookingsRow,
+    paymentStats,
+    centres,
+  ] = await Promise.all([
+    db.prepare(`SELECT COUNT(*) as c FROM users WHERE role = 'FARMER'`).get() as Promise<{ c: number } | undefined>,
+    db.prepare(`SELECT COUNT(*) as c FROM users WHERE role = 'STAFF'`).get() as Promise<{ c: number } | undefined>,
+    db.prepare(`SELECT COUNT(*) as c FROM procurement_centres`).get() as Promise<{ c: number } | undefined>,
+    db.prepare(`SELECT COUNT(*) as c FROM slots s JOIN bookings b ON b.slot_id = s.id WHERE s.date = ? AND b.status != 'CANCELLED'`).get(today) as Promise<{ c: number } | undefined>,
+    db.prepare(
+      `SELECT COUNT(*) as c FROM queue_entries q JOIN bookings b ON q.booking_id = b.id
+       WHERE q.date = ? AND b.status NOT IN ('PROCUREMENT_COMPLETED','PAYMENT_PROCESSING','PAYMENT_COMPLETED','CANCELLED','NO_SHOW')`
+    ).get(today) as Promise<{ c: number } | undefined>,
+    db.prepare(`SELECT COUNT(*) as c FROM bookings WHERE status IN ('PROCUREMENT_COMPLETED','PAYMENT_PROCESSING','PAYMENT_COMPLETED')`).get() as Promise<{ c: number } | undefined>,
+    db.prepare(`SELECT COUNT(*) as c FROM payments WHERE payment_status IN ('PENDING','PROCESSING') OR status IN ('PENDING','PROCESSING')`).get() as Promise<{ c: number } | undefined>,
+    db.prepare(`SELECT COUNT(*) as c FROM bookings WHERE status IN ('CANCELLED','NO_SHOW')`).get() as Promise<{ c: number } | undefined>,
+    db.prepare(`SELECT COUNT(*) as c FROM bookings`).get() as Promise<{ c: number } | undefined>,
+    db.prepare(`
+      SELECT
+        COUNT(id) as totalCount,
+        COALESCE(SUM(CASE WHEN payment_status = 'PAID' OR status = 'PAID' THEN COALESCE(total_amount, amount, 0) ELSE 0 END), 0) as paidAmount,
+        COALESCE(SUM(CASE WHEN payment_status IN ('PENDING', 'PROCESSING', 'ON_HOLD') OR status IN ('PENDING', 'PROCESSING') THEN COALESCE(total_amount, amount, 0) ELSE 0 END), 0) as pendingAmount,
+        COUNT(CASE WHEN payment_status = 'PENDING' OR (payment_status IS NULL AND status = 'PENDING') THEN 1 END) as pendingCount,
+        COUNT(CASE WHEN payment_status = 'PROCESSING' OR (payment_status IS NULL AND status = 'PROCESSING') THEN 1 END) as processingCount,
+        COUNT(CASE WHEN payment_status = 'PAID' OR (payment_status IS NULL AND status = 'PAID') THEN 1 END) as paidCount,
+        COUNT(CASE WHEN payment_status = 'FAILED' OR (payment_status IS NULL AND status = 'FAILED') THEN 1 END) as failedCount,
+        COUNT(CASE WHEN payment_status = 'ON_HOLD' THEN 1 END) as onHoldCount
+      FROM payments
+    `).get() as Promise<any>,
+    db.prepare(`SELECT id, name, code, district FROM procurement_centres ORDER BY name`).all() as Promise<{ id: string; name: string; code: string; district: string }[]>,
+  ]);
+
+  const totalFarmers = totalFarmersRow?.c ?? 0;
+  const totalStaff = totalStaffRow?.c ?? 0;
+  const totalCentres = totalCentresRow?.c ?? 0;
+  const todaysBookings = todaysBookingsRow?.c ?? 0;
+  const activeQueues = activeQueuesRow?.c ?? 0;
+  const completed = completedRow?.c ?? 0;
+  const pendingPayments = pendingPaymentsRow?.c ?? 0;
+  const cancelled = cancelledRow?.c ?? 0;
+  const totalBookings = totalBookingsRow?.c ?? 0;
   const noShowRate = totalBookings ? Math.round((cancelled / totalBookings) * 1000) / 10 : 0;
-
-  const paymentStats = (await db.prepare(`
-    SELECT
-      COUNT(id) as totalCount,
-      COALESCE(SUM(CASE WHEN payment_status = 'PAID' OR status = 'PAID' THEN COALESCE(total_amount, amount, 0) ELSE 0 END), 0) as paidAmount,
-      COALESCE(SUM(CASE WHEN payment_status IN ('PENDING', 'PROCESSING', 'ON_HOLD') OR status IN ('PENDING', 'PROCESSING') THEN COALESCE(total_amount, amount, 0) ELSE 0 END), 0) as pendingAmount,
-      COUNT(CASE WHEN payment_status = 'PENDING' OR (payment_status IS NULL AND status = 'PENDING') THEN 1 END) as pendingCount,
-      COUNT(CASE WHEN payment_status = 'PROCESSING' OR (payment_status IS NULL AND status = 'PROCESSING') THEN 1 END) as processingCount,
-      COUNT(CASE WHEN payment_status = 'PAID' OR (payment_status IS NULL AND status = 'PAID') THEN 1 END) as paidCount,
-      COUNT(CASE WHEN payment_status = 'FAILED' OR (payment_status IS NULL AND status = 'FAILED') THEN 1 END) as failedCount,
-      COUNT(CASE WHEN payment_status = 'ON_HOLD' THEN 1 END) as onHoldCount
-    FROM payments
-  `).get()) as any;
-
-  const centres = (await db.prepare(`SELECT id, name, code, district FROM procurement_centres ORDER BY name`).all()) as {
-    id: string;
-    name: string;
-    code: string;
-    district: string;
-  }[];
   const centreStatus = await Promise.all(centres.map(async (c) => ({ ...c, ...(await centreLoad(c.id, today)) })));
 
   return {

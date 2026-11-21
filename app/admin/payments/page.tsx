@@ -46,7 +46,8 @@ export default function AdminPaymentsPage() {
   const [centres, setCentres] = useState<any[]>([]);
   const [me, setMe] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
+  const [pendingActionId, setPendingActionId] = useState<string | null>(null);
+  const busy = !!pendingActionId;
   const [error, setError] = useState("");
 
   // Filters
@@ -71,6 +72,7 @@ export default function AdminPaymentsPage() {
   const [failReason, setFailReason] = useState("");
 
   const inFlightRef = useRef(false);
+  const pendingReloadRef = useRef(false);
   const latestReqIdRef = useRef(0);
   const filtersRef = useRef({ statusFilter, centreFilter, dateFilter, searchQuery });
 
@@ -82,6 +84,7 @@ export default function AdminPaymentsPage() {
     if (isInitial) {
       setLoading(true);
     } else if (inFlightRef.current) {
+      pendingReloadRef.current = true;
       return;
     }
 
@@ -136,6 +139,10 @@ export default function AdminPaymentsPage() {
     } finally {
       inFlightRef.current = false;
       if (isInitial) setLoading(false);
+      if (pendingReloadRef.current) {
+        pendingReloadRef.current = false;
+        loadData(false);
+      }
     }
   }, []);
 
@@ -171,7 +178,9 @@ export default function AdminPaymentsPage() {
   }, [statusFilter, centreFilter, dateFilter, searchQuery, loadData]);
 
   async function executeAction(payload: any) {
-    setBusy(true);
+    const actionKey = `${payload.paymentId}_${payload.action}`;
+    if (pendingActionId === actionKey) return;
+    setPendingActionId(actionKey);
     setError("");
     try {
       const res = await fetch("/api/admin/payments/actions", {
@@ -185,16 +194,44 @@ export default function AdminPaymentsPage() {
         throw new Error(data.error || "Action could not be completed.");
       }
 
-      // Close modal forms and reload
+      // Close modal forms
       setShowMarkPaidForm(false);
       setShowHoldForm(false);
       setShowFailForm(false);
       setActivePayment(null);
-      await loadData(false);
+
+      // Server confirmed 200 OK: immediately update local state
+      const updatedStatus = data.status || (
+        payload.action === "START_PROCESSING" ? "PROCESSING" :
+        payload.action === "MARK_PAID" ? "PAID" :
+        payload.action === "PUT_ON_HOLD" ? "ON_HOLD" :
+        payload.action === "MARK_FAILED" ? "FAILED" :
+        payload.action === "RESUME_PAYMENT" ? "PROCESSING" : undefined
+      );
+
+      if (updatedStatus) {
+        setPayments((prev) =>
+          prev.map((p) => {
+            if (p.id !== payload.paymentId) return p;
+            return {
+              ...p,
+              paymentStatus: updatedStatus,
+              transactionId: payload.transactionReference || p.transactionId,
+              transactionReference: payload.transactionReference || p.transactionReference,
+              paymentMethod: payload.paymentMethod || p.paymentMethod,
+              holdReason: payload.holdReason || p.holdReason,
+              failureReason: payload.failureReason || p.failureReason,
+            };
+          })
+        );
+      }
+
+      // Background authoritative reload
+      loadData(false);
     } catch (err: any) {
       setError(err.message || "Action failed. Please try again.");
     } finally {
-      setBusy(false);
+      setPendingActionId(null);
     }
   }
 
@@ -724,8 +761,17 @@ export default function AdminPaymentsPage() {
                       }
                       className="btn-primary w-full !py-2.5 text-xs font-bold inline-flex items-center justify-center gap-2 bg-emerald-700 hover:bg-emerald-800 shadow-sm"
                     >
-                      <CheckCircle2 size={15} />
-                      <span>{busy ? "Confirming..." : "Confirm External Payment & Mark PAID"}</span>
+                      {pendingActionId?.includes("MARK_PAID") ? (
+                        <>
+                          <RefreshCw size={14} className="animate-spin" />
+                          <span>Confirming Payment & Marking Paid...</span>
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle2 size={15} />
+                          <span>Confirm External Payment & Mark PAID</span>
+                        </>
+                      )}
                     </button>
                   </div>
                 )}
@@ -812,7 +858,7 @@ export default function AdminPaymentsPage() {
                       activePayment.paymentStatus === "PENDING") && (
                       <button
                         type="button"
-                        disabled={busy}
+                        disabled={pendingActionId === `${activePayment.id}_START_PROCESSING`}
                         onClick={() =>
                           executeAction({
                             paymentId: activePayment.id,
@@ -821,9 +867,18 @@ export default function AdminPaymentsPage() {
                         }
                         className="btn-primary !py-2 !px-4 text-xs font-bold inline-flex items-center gap-2 shadow-xs"
                       >
-                        <Clock size={14} />
-                        <span>Start Processing</span>
-                        <ArrowRight size={13} />
+                        {pendingActionId === `${activePayment.id}_START_PROCESSING` ? (
+                          <>
+                            <RefreshCw size={14} className="animate-spin" />
+                            <span>Processing...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Clock size={14} />
+                            <span>Start Processing</span>
+                            <ArrowRight size={13} />
+                          </>
+                        )}
                       </button>
                     )}
 

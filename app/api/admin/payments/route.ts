@@ -99,8 +99,6 @@ export async function GET(req: NextRequest) {
     LIMIT ? OFFSET ?
   `;
 
-  const rows = (await db.prepare(query).all(...vals, limit, offset)) as any[];
-
   const countQuery = `
     SELECT COUNT(p.id) as total
     FROM payments p
@@ -110,24 +108,28 @@ export async function GET(req: NextRequest) {
     JOIN slots s ON b.slot_id = s.id
     ${whereClause}
   `;
-  const totalCount = ((await db.prepare(countQuery).get(...vals)) as any)?.total || 0;
 
-  const stats = ((await db.prepare(`
-    SELECT
-      COUNT(id) as totalRecords,
-      COALESCE(SUM(CASE WHEN payment_status = 'PAID' OR status = 'PAID' THEN COALESCE(final_payable_amount, total_amount, amount, 0) ELSE 0 END), 0) as totalDisbursed,
-      COALESCE(SUM(CASE WHEN payment_status IN ('BANK_DETAILS_SUBMITTED', 'PENDING', 'PROCESSING', 'ON_HOLD') OR status IN ('PENDING', 'PROCESSING') THEN COALESCE(final_payable_amount, total_amount, amount, 0) ELSE 0 END), 0) as pendingDisbursement,
-      COUNT(CASE WHEN payment_status = 'BANK_DETAILS_SUBMITTED' OR payment_status = 'PENDING' OR (payment_status IS NULL AND status = 'PENDING') THEN 1 END) as pendingCount,
-      COUNT(CASE WHEN payment_status = 'BANK_DETAILS_REQUIRED' THEN 1 END) as bankDetailsRequiredCount,
-      COUNT(CASE WHEN payment_status = 'BANK_DETAILS_SUBMITTED' THEN 1 END) as bankDetailsSubmittedCount,
-      COUNT(CASE WHEN payment_status = 'PROCESSING' OR (payment_status IS NULL AND status = 'PROCESSING') THEN 1 END) as processingCount,
-      COUNT(CASE WHEN payment_status = 'PAID' OR (payment_status IS NULL AND status = 'PAID') THEN 1 END) as paidCount,
-      COUNT(CASE WHEN payment_status = 'FAILED' OR (payment_status IS NULL AND status = 'FAILED') THEN 1 END) as failedCount,
-      COUNT(CASE WHEN payment_status = 'ON_HOLD' THEN 1 END) as onHoldCount
-    FROM payments
-  `).get()) as any) || {};
+  const [rows, countRow, stats, centres] = await Promise.all([
+    db.prepare(query).all(...vals, limit, offset) as Promise<any[]>,
+    db.prepare(countQuery).get(...vals) as Promise<{ total?: number } | undefined>,
+    db.prepare(`
+      SELECT
+        COUNT(id) as totalRecords,
+        COALESCE(SUM(CASE WHEN payment_status = 'PAID' OR status = 'PAID' THEN COALESCE(final_payable_amount, total_amount, amount, 0) ELSE 0 END), 0) as totalDisbursed,
+        COALESCE(SUM(CASE WHEN payment_status IN ('BANK_DETAILS_SUBMITTED', 'PENDING', 'PROCESSING', 'ON_HOLD') OR status IN ('PENDING', 'PROCESSING') THEN COALESCE(final_payable_amount, total_amount, amount, 0) ELSE 0 END), 0) as pendingDisbursement,
+        COUNT(CASE WHEN payment_status = 'BANK_DETAILS_SUBMITTED' OR payment_status = 'PENDING' OR (payment_status IS NULL AND status = 'PENDING') THEN 1 END) as pendingCount,
+        COUNT(CASE WHEN payment_status = 'BANK_DETAILS_REQUIRED' THEN 1 END) as bankDetailsRequiredCount,
+        COUNT(CASE WHEN payment_status = 'BANK_DETAILS_SUBMITTED' THEN 1 END) as bankDetailsSubmittedCount,
+        COUNT(CASE WHEN payment_status = 'PROCESSING' OR (payment_status IS NULL AND status = 'PROCESSING') THEN 1 END) as processingCount,
+        COUNT(CASE WHEN payment_status = 'PAID' OR (payment_status IS NULL AND status = 'PAID') THEN 1 END) as paidCount,
+        COUNT(CASE WHEN payment_status = 'FAILED' OR (payment_status IS NULL AND status = 'FAILED') THEN 1 END) as failedCount,
+        COUNT(CASE WHEN payment_status = 'ON_HOLD' THEN 1 END) as onHoldCount
+      FROM payments
+    `).get() as Promise<any>,
+    db.prepare(`SELECT id, name, code, district FROM procurement_centres ORDER BY name`).all() as Promise<any[]>,
+  ]);
 
-  const centres = await db.prepare(`SELECT id, name, code, district FROM procurement_centres ORDER BY name`).all();
+  const totalCount = countRow?.total || 0;
 
   return NextResponse.json({
     payments: rows,

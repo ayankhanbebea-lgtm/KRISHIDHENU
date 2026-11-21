@@ -42,32 +42,51 @@ export async function GET(req: NextRequest) {
 
   // Filter by date if requested (unless "all")
   const activeDate = !requestedDate || requestedDate === "undefined" ? todayIST : requestedDate === "all" ? "all" : normalizeDateToYMD(requestedDate);
+  const targetServingDate = activeDate === "all" ? todayIST : activeDate;
 
-  // Unified Query matching Admin Database Query
-  const allRows = (await db
-    .prepare(
-      `SELECT b.id, b.token, b.status, b.quantity_quintal as quantityQuintal, b.actual_quantity as actualQuantity,
-              b.quality_grade as qualityGrade, b.created_at as createdAt, b.updated_at as updatedAt,
-              u.name as farmerName, u.phone as farmerPhone,
-              c.id as centreId, c.name as centreName, c.code as centreCode,
-              cr.name as cropName, cr.code as cropCode, COALESCE(cr.msp_rate, 2275) as cropMsp,
-              s.date as slotDate, s.start_time as startTime, s.end_time as endTime,
-              COALESCE(q.position, 1) as position, q.called_at as calledAt,
-              COALESCE(p.payment_status, p.status) as paymentStatus,
-              COALESCE(p.final_payable_amount, p.total_amount, p.amount) as paymentAmount,
-              p.rate_per_unit as ratePerUnit, p.deductions as deductions, p.transaction_id as transactionId
-       FROM bookings b
-       JOIN slots s ON b.slot_id = s.id
-       JOIN farmer_profiles fp ON b.farmer_id = fp.id
-       JOIN users u ON fp.user_id = u.id
-       JOIN procurement_centres c ON b.centre_id = c.id
-       JOIN crops cr ON b.crop_id = cr.id
-       LEFT JOIN queue_entries q ON q.booking_id = b.id
-       LEFT JOIN payments p ON p.booking_id = b.id
-       WHERE b.centre_id = ?
-       ORDER BY s.date ASC, COALESCE(q.position, 999) ASC, b.created_at ASC`
-    )
-    .all(centre.id)) as any[];
+  // Execute independent queries in parallel via Promise.all to minimize round-trip latency
+  const [allRows, upcomingSummary, allCentres, serving, load] = await Promise.all([
+    db
+      .prepare(
+        `SELECT b.id, b.token, b.status, b.quantity_quintal as quantityQuintal, b.actual_quantity as actualQuantity,
+                b.quality_grade as qualityGrade, b.created_at as createdAt, b.updated_at as updatedAt,
+                u.name as farmerName, u.phone as farmerPhone,
+                c.id as centreId, c.name as centreName, c.code as centreCode,
+                cr.name as cropName, cr.code as cropCode, COALESCE(cr.msp_rate, 2275) as cropMsp,
+                s.date as slotDate, s.start_time as startTime, s.end_time as endTime,
+                COALESCE(q.position, 1) as position, q.called_at as calledAt,
+                COALESCE(p.payment_status, p.status) as paymentStatus,
+                COALESCE(p.final_payable_amount, p.total_amount, p.amount) as paymentAmount,
+                p.rate_per_unit as ratePerUnit, p.deductions as deductions, p.transaction_id as transactionId
+         FROM bookings b
+         JOIN slots s ON b.slot_id = s.id
+         JOIN farmer_profiles fp ON b.farmer_id = fp.id
+         JOIN users u ON fp.user_id = u.id
+         JOIN procurement_centres c ON b.centre_id = c.id
+         JOIN crops cr ON b.crop_id = cr.id
+         LEFT JOIN queue_entries q ON q.booking_id = b.id
+         LEFT JOIN payments p ON p.booking_id = b.id
+         WHERE b.centre_id = ?
+         ORDER BY s.date ASC, COALESCE(q.position, 999) ASC, b.created_at ASC`
+      )
+      .all(centre.id) as Promise<any[]>,
+
+    db
+      .prepare(
+        `SELECT s.date, COUNT(b.id) as count
+         FROM bookings b
+         JOIN slots s ON b.slot_id = s.id
+         WHERE b.centre_id = ? AND b.status NOT IN ('CANCELLED', 'NO_SHOW')
+         GROUP BY s.date
+         ORDER BY s.date ASC`
+      )
+      .all(centre.id) as Promise<{ date: string; count: number }[]>,
+
+    db.prepare(`SELECT id, name, code FROM procurement_centres ORDER BY code ASC`).all() as Promise<any[]>,
+
+    currentlyServingToken(centre.id, targetServingDate),
+    centreLoad(centre.id, targetServingDate),
+  ]);
 
   // Normalized date comparison
   const filteredRows = activeDate === "all"
@@ -85,23 +104,6 @@ export async function GET(req: NextRequest) {
     completed: filteredRows.filter((r) => ["PROCUREMENT_COMPLETED", "PAYMENT_PROCESSING", "PAYMENT_COMPLETED"].includes(r.status)).length,
     paymentPending: filteredRows.filter((r) => r.paymentStatus && r.paymentStatus !== "PAID").length,
   };
-
-  // Group upcoming active bookings by date
-  const upcomingSummary = (await db
-    .prepare(
-      `SELECT s.date, COUNT(b.id) as count
-       FROM bookings b
-       JOIN slots s ON b.slot_id = s.id
-       WHERE b.centre_id = ? AND b.status NOT IN ('CANCELLED', 'NO_SHOW')
-       GROUP BY s.date
-       ORDER BY s.date ASC`
-    )
-    .all(centre.id)) as { date: string; count: number }[];
-
-  const allCentres = await db.prepare(`SELECT id, name, code FROM procurement_centres ORDER BY code ASC`).all();
-
-  const serving = await currentlyServingToken(centre.id, activeDate === "all" ? todayIST : activeDate);
-  const load = await centreLoad(centre.id, activeDate === "all" ? todayIST : activeDate);
 
   const respEnd = Date.now();
   console.log(`[STAFF_QUEUE_TRACE] reqId=${requestId} time=${timestamp} centre=${centre.code} date=${activeDate} total=${filteredRows.length} active=${activeTotal} duration=${respEnd - reqStart}ms`);

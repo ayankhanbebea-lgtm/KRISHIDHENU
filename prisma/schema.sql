@@ -151,6 +151,11 @@ CREATE TABLE IF NOT EXISTS payments (
 CREATE INDEX IF NOT EXISTS idx_payments_farmer_id ON payments(farmer_id);
 CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(payment_status);
 CREATE INDEX IF NOT EXISTS idx_payments_centre ON payments(procurement_centre_id);
+CREATE INDEX IF NOT EXISTS idx_payments_booking_id ON payments(booking_id);
+CREATE INDEX IF NOT EXISTS idx_bookings_slot_id ON bookings(slot_id);
+CREATE INDEX IF NOT EXISTS idx_bookings_farmer_id ON bookings(farmer_id);
+CREATE INDEX IF NOT EXISTS idx_slots_centre_date ON slots(centre_id, date);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at DESC);
 
 CREATE TABLE IF NOT EXISTS notifications (
   id TEXT PRIMARY KEY,
