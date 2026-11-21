@@ -2,8 +2,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { getDb } from "@/lib/db";
 import { getFarmerProfileId } from "@/lib/farmer";
-import { farmersAhead, estimateWaitMinutes, currentlyServingToken } from "@/lib/services";
+import { getStaffCentre } from "@/lib/staff";
+import {
+  farmersAhead,
+  estimateWaitMinutes,
+  currentlyServingToken,
+  centreLoad,
+  adminOverview,
+} from "@/lib/services";
 import { detectLanguage } from "@/lib/language";
+import { getTodayIST } from "@/lib/format";
 import {
   generateIntelligentFarmerResponse,
   FarmerAssistantContext,
@@ -119,10 +127,149 @@ async function getFarmerContext(
   };
 }
 
+async function getStaffContext(
+  userId: string,
+  sessionUser: { name: string; phone: string }
+): Promise<any> {
+  const db = getDb();
+  const todayIST = getTodayIST();
+  let centre = await getStaffCentre(userId);
+  if (!centre) {
+    centre = (await db.prepare(`SELECT id, name, code FROM procurement_centres ORDER BY code ASC LIMIT 1`).get()) as any;
+  }
+  if (!centre) {
+    return {
+      staff: { name: sessionUser.name, phone: sessionUser.phone },
+      centre: null,
+      todayIST,
+    };
+  }
+
+  const centreInfo = (await db
+    .prepare(
+      `SELECT id, name, code, district, location, open_time as openTime, close_time as closeTime,
+              daily_capacity as dailyCapacity, avg_service_time_mins as avgServiceTimeMins
+       FROM procurement_centres
+       WHERE id = ?`
+    )
+    .get(centre.id)) as any;
+
+  const [serving, load, summaryRow, nextWaiting] = await Promise.all([
+    currentlyServingToken(centre.id, todayIST),
+    centreLoad(centre.id, todayIST),
+    db
+      .prepare(
+        `SELECT
+           COUNT(b.id) as totalBookings,
+           COUNT(CASE WHEN b.status = 'BOOKED' THEN 1 END) as waiting,
+           COUNT(CASE WHEN b.status IN ('ARRIVED', 'VERIFIED', 'WEIGHING', 'PROCUREMENT_IN_PROGRESS') THEN 1 END) as inProgress,
+           COUNT(CASE WHEN b.status IN ('PROCUREMENT_COMPLETED', 'PAYMENT_PROCESSING', 'PAYMENT_COMPLETED') THEN 1 END) as completed
+         FROM bookings b
+         JOIN slots s ON b.slot_id = s.id
+         WHERE b.centre_id = ? AND s.date = ?`
+      )
+      .get(centre.id, todayIST) as Promise<any>,
+    db
+      .prepare(
+        `SELECT b.token, cr.name as cropName, s.start_time as startTime, s.end_time as endTime, b.status
+         FROM bookings b
+         JOIN slots s ON b.slot_id = s.id
+         JOIN crops cr ON b.crop_id = cr.id
+         WHERE b.centre_id = ? AND s.date = ? AND b.status IN ('BOOKED', 'ARRIVED')
+         ORDER BY s.start_time ASC, b.created_at ASC
+         LIMIT 5`
+      )
+      .all(centre.id, todayIST) as Promise<any[]>,
+  ]);
+
+  return {
+    staff: { name: sessionUser.name, phone: sessionUser.phone },
+    centre: centreInfo || centre,
+    todayIST,
+    queueStatus: {
+      currentlyServingToken: serving || "None called yet",
+      waitingFarmers: summaryRow?.waiting ?? load.waiting,
+      inProgressCount: summaryRow?.inProgress ?? 0,
+      completedTodayCount: summaryRow?.completed ?? 0,
+      totalTodayBookings: summaryRow?.totalBookings ?? load.bookedCount,
+      estimatedWaitMinutes: load.estimatedWaitMins,
+      centreLoadLevel: load.load,
+      dailyCapacityQuintal: centreInfo?.dailyCapacity || 120,
+    },
+    nextWaitingTokens: nextWaiting,
+    procurementGuidelines: {
+      qualityStandards: "Grade A FAQ (Fair Average Quality): Moisture limit <= 12%, Foreign organic matter <= 1%.",
+      workflowSteps: "1. Call Next Farmer -> 2. Physical Check & Mark Arrived -> 3. Weighing & Grading -> 4. Record Weight & Complete -> 5. Farmer submits bank details -> 6. Admin bank DBT payment.",
+    },
+  };
+}
+
+async function getAdminContext(sessionUser: { name: string; phone: string }): Promise<any> {
+  const todayIST = getTodayIST();
+  const overview = await adminOverview();
+
+  return {
+    admin: { name: sessionUser.name, phone: sessionUser.phone },
+    todayIST,
+    procurementOverview: {
+      totalRegisteredFarmers: overview.totalFarmers,
+      totalStaffMembers: overview.totalStaff,
+      totalProcurementCentres: overview.totalCentres,
+      todaysBookings: overview.todaysBookings,
+      activeQueuesPlatformWide: overview.activeQueues,
+      completedProcurements: overview.completed,
+      pendingPaymentsCount: overview.pendingPayments,
+      noShowRatePercentage: `${overview.noShowRate}%`,
+    },
+    disbursementSummary: {
+      totalDisbursedAmount: `₹${(overview.paymentStats?.paidAmount || 0).toLocaleString("en-IN")}`,
+      pendingDisbursementAmount: `₹${(overview.paymentStats?.pendingAmount || 0).toLocaleString("en-IN")}`,
+      paidRecordsCount: overview.paymentStats?.paidCount || 0,
+      processingRecordsCount: overview.paymentStats?.processingCount || 0,
+      pendingRecordsCount: overview.paymentStats?.pendingCount || 0,
+      failedRecordsCount: overview.paymentStats?.failedCount || 0,
+      onHoldRecordsCount: overview.paymentStats?.onHoldCount || 0,
+    },
+    centresOverview: overview.centreStatus.map((c: any) => ({
+      name: c.name,
+      code: c.code,
+      district: c.district,
+      currentLoad: c.load,
+      waitingQueue: c.waiting,
+      totalCapacity: c.totalCapacity,
+      bookedCount: c.bookedCount,
+    })),
+  };
+}
+
+function generateStaffFallback(context: any): string {
+  const c = context.centre;
+  const q = context.queueStatus;
+  return `Staff Operational Summary for ${c?.name || "your centre"} (${c?.code || "Mandi"}):\n` +
+    `• Currently Serving Token: ${q?.currentlyServingToken || "None"}\n` +
+    `• Waiting Farmers in Queue: ${q?.waitingFarmers ?? 0}\n` +
+    `• In-Progress (Arrived/Weighing): ${q?.inProgressCount ?? 0}\n` +
+    `• Completed Today: ${q?.completedTodayCount ?? 0}\n` +
+    `• Mandi Operating Hours: ${c?.openTime || "09:00"} – ${c?.closeTime || "17:00"}\n` +
+    `• Fair Average Quality (FAQ) Standard: Moisture <= 12%, Foreign matter <= 1% for Grade A.`;
+}
+
+function generateAdminFallback(context: any): string {
+  const o = context.procurementOverview;
+  const d = context.disbursementSummary;
+  return `Admin Procurement & Platform Summary for today (${context.todayIST}):\n` +
+    `• Platform Bookings Today: ${o?.todaysBookings ?? 0}\n` +
+    `• Total Registered Farmers: ${o?.totalRegisteredFarmers ?? 0} | Active Mandis: ${o?.totalProcurementCentres ?? 0}\n` +
+    `• Active Queue (Platform-wide): ${o?.activeQueuesPlatformWide ?? 0} farmers\n` +
+    `• Completed Procurements: ${o?.completedProcurements ?? 0}\n` +
+    `• Total Disbursed: ${d?.totalDisbursedAmount || "₹0"} (${d?.paidRecordsCount ?? 0} payments)\n` +
+    `• Pending Bank Disbursement: ${d?.pendingDisbursementAmount || "₹0"} (${d?.pendingRecordsCount ?? 0} payments)`;
+}
+
 export async function GET(req: NextRequest) {
   const session = await getSession(req);
-  if (!session || session.role !== "FARMER") {
-    return NextResponse.json({ error: "Please login as a farmer." }, { status: 401 });
+  if (!session || !["FARMER", "STAFF", "ADMIN"].includes(session.role)) {
+    return NextResponse.json({ error: "Please login to access AI Assistant." }, { status: 401 });
   }
 
   const apiKey = (process.env.GEMINI_API_KEY || process.env.AI_PROVIDER_API_KEY || "").trim();
@@ -177,6 +324,8 @@ export async function GET(req: NextRequest) {
     isLive: hasKey,
     engine: "gemini",
     model: configuredModel,
+    userRole: session.role,
+    userName: session.name,
     defaultLanguage: "en",
     geminiDiagnostics,
   });
@@ -185,13 +334,8 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const session = await getSession(req);
-    if (!session || session.role !== "FARMER") {
-      return NextResponse.json({ error: "Please login as a farmer." }, { status: 401 });
-    }
-
-    const farmerId = (await getFarmerProfileId(session.id)) || session.id;
-    if (!farmerId) {
-      return NextResponse.json({ error: "Farmer profile not found." }, { status: 404 });
+    if (!session || !["FARMER", "STAFF", "ADMIN"].includes(session.role)) {
+      return NextResponse.json({ error: "Please login to access AI Assistant." }, { status: 401 });
     }
 
     const body = await req.json().catch(() => null);
@@ -207,11 +351,20 @@ export async function POST(req: NextRequest) {
     // 1. Detect if this query needs verified Turso database context
     const needsDbContext = isApplicationSpecificQuery(message);
 
-    // 2. Query Turso ONLY when application-specific data is needed
-    let context: FarmerAssistantContext | null = null;
+    // 2. Query Turso ONLY when application-specific data is needed, scoped strictly to user role
+    let context: any = null;
     if (needsDbContext) {
       try {
-        context = await getFarmerContext(farmerId, { name: session.name, phone: session.phone });
+        if (session.role === "FARMER") {
+          const farmerId = (await getFarmerProfileId(session.id)) || session.id;
+          if (farmerId) {
+            context = await getFarmerContext(farmerId, { name: session.name, phone: session.phone });
+          }
+        } else if (session.role === "STAFF") {
+          context = await getStaffContext(session.id, { name: session.name, phone: session.phone });
+        } else if (session.role === "ADMIN") {
+          context = await getAdminContext({ name: session.name, phone: session.phone });
+        }
       } catch (dbErr: any) {
         console.warn("[Assistant] DB context lookup failed, continuing with Gemini general knowledge:", dbErr?.message);
         context = null;
@@ -222,8 +375,32 @@ export async function POST(req: NextRequest) {
     const detectedLanguage = detectLanguage(message);
     const apiKey = (process.env.GEMINI_API_KEY || process.env.AI_PROVIDER_API_KEY || "").trim();
 
-    // 3. Build structured system prompt for Gemini
-    const systemPrompt = `You are "KRISHIDHENU AI Assistant", an empathetic, truthful, and intelligent agricultural assistant for Indian farmers using the KRISHIDHENU Digital Farmer Procurement & Smart Mandi Management Platform.
+    // 3. Build structured role-based system prompt for Gemini
+    const roleGuidance =
+      session.role === "FARMER"
+        ? `You are assisting a registered Indian Farmer: "${session.name}".
+Help them with their token status, queue position, Mandi timings, crop MSP rates, payment tracking, and farming guidance.`
+        : session.role === "STAFF"
+        ? `You are assisting an authorized Mandi Staff member: "${session.name}".
+Help them manage today's queue at their procurement centre, understand procedural steps (Call Next, Arrived, Weighing, FAQ Grading, Procurement Complete), look up tokens, and ensure smooth Mandi operations.`
+        : `You are assisting a Platform Administrator: "${session.name}".
+Provide high-level operational statistics, payment disbursement totals, centre congestion monitoring, capacity overview, and administrative governance guidance.`;
+
+    const dataContextBlock =
+      needsDbContext && context
+        ? `=== VERIFIED TURSO DATABASE CONTEXT FOR THIS ${session.role} ===
+${JSON.stringify(context, null, 2)}
+===================================================================
+STRICT OPERATIONAL RULES FOR APPLICATION DATA:
+- For questions regarding verified application records (tokens, queue counts, centres, payment amounts, dates), use EXCLUSIVELY the verified data provided in the database context above.
+- NEVER invent, guess, or hallucinate token numbers, queue counts, payment amounts, or dates.
+- SECURITY: Only discuss data belonging to this user's authorized role and scope.
+  * A Farmer can only see their own profile, tokens, and payments.
+  * Staff only sees their assigned centre's queue and tokens.
+  * Admin sees platform-level summaries and governance information.`
+        : `NOTE: This is a general query (or general agricultural/platform question). Answer directly using your agricultural, economic, and platform knowledge. Do not reference private records unless asked.`;
+
+    const systemPrompt = `You are "KRISHIDHENU AI Assistant", an empathetic, truthful, and intelligent agricultural assistant for the KRISHIDHENU Digital Farmer Procurement & Smart Mandi Management Platform.
 
 PLATFORM & PROJECT KNOWLEDGE:
 - Platform Name: KRISHIDHENU (Smart Mandi & Digital Farmer Procurement Platform).
@@ -232,17 +409,10 @@ PLATFORM & PROJECT KNOWLEDGE:
 - CRITICAL IDENTITY RULE: You are an AI assistant built for KRISHIDHENU; you are NOT the founder. If asked who the founder or creator of KRISHIDHENU is, state clearly that Ayan Khan is the founder and creator, and that you are the platform's AI assistant.
 - For unknown project-specific facts, state honestly that the information is not available rather than guessing or hallucinating.
 
-${
-  needsDbContext && context
-    ? `=== VERIFIED TURSO DATABASE CONTEXT FOR THIS LOGGED-IN FARMER ===
-${JSON.stringify(context, null, 2)}
-===================================================================
-STRICT OPERATIONAL RULES FOR APPLICATION DATA:
-- For questions regarding this farmer's token number, slot date, queue position, estimated wait time, Mandi centre, and payment status, use EXCLUSIVELY the verified data provided in the database context above.
-- NEVER invent or guess token numbers, queue positions, payment amounts, or dates.
-- If the farmer has no active booking, inform them politely that they currently have no active token and can book one anytime on their dashboard.`
-    : `NOTE: This is a general query (or general agricultural question). Answer directly using your agricultural, economic, and platform knowledge. Do not reference personal farmer records unless asked.`
-}
+USER ROLE CONTEXT:
+${roleGuidance}
+
+${dataContextBlock}
 
 LANGUAGE & CONVERSATION RULES:
 - Detect the language of the user's latest message and reply in that same language:
@@ -250,7 +420,7 @@ LANGUAGE & CONVERSATION RULES:
   * Hindi user message (Devanagari or Hindi) -> Reply in natural, clear Hindi (Devanagari script).
   * Hinglish user message (Hindi written in Roman/English alphabet) -> Reply in natural Hinglish.
 - If the user explicitly requests a language (e.g. "Explain MSP in simple Hindi"), strictly follow their language instruction.
-- Address the farmer respectfully: "Greetings [Name]" in English, "नमस्ते [Name] जी" in Hindi, or "Namaste [Name] ji" in Hinglish.
+- Address the user respectfully: "Greetings [Name]" in English, "नमस्ते [Name] जी" in Hindi, or "Namaste [Name] ji" in Hinglish.
 - Keep answers clear, supportive, and concise. Avoid dense walls of text; use bullet points where helpful.`;
 
     let liveGeminiReply: string | null = null;
@@ -311,7 +481,6 @@ LANGUAGE & CONVERSATION RULES:
             lastReason = errJson?.error?.details?.[0]?.reason || errJson?.error?.status || "API_ERROR";
             lastErrorMessage = errJson?.error?.message || response.statusText || `HTTP ${response.status}`;
             console.warn(`[Gemini API] Model ${modelToTry} attempt failed: HTTP ${response.status} (${lastReason})`);
-            // Try next candidate model
             continue;
           }
         } catch (err: any) {
@@ -320,7 +489,6 @@ LANGUAGE & CONVERSATION RULES:
           lastStatus = err?.name === "AbortError" ? 504 : 500;
           lastReason = err?.name === "AbortError" ? "TIMEOUT" : "NETWORK_ERROR";
           lastErrorMessage = err?.name === "AbortError" ? "Request timed out" : "Network exception";
-          // Try next candidate model
           continue;
         }
       }
@@ -339,6 +507,7 @@ LANGUAGE & CONVERSATION RULES:
         model: successfulModel,
         responseTimeMs,
         language: detectedLanguage,
+        userRole: session.role,
       });
     }
 
@@ -348,12 +517,19 @@ LANGUAGE & CONVERSATION RULES:
     // invoke the deterministic engine as an EMERGENCY FALLBACK only.
     if (needsDbContext && context) {
       console.warn(`[Assistant] Gemini unavailable (${lastReason}). Using emergency database fallback for application query.`);
-      const fallbackReply = generateIntelligentFarmerResponse({
-        message,
-        context,
-        language: detectedLanguage,
-        sessionName: session.name,
-      });
+      let fallbackReply = "";
+      if (session.role === "FARMER") {
+        fallbackReply = generateIntelligentFarmerResponse({
+          message,
+          context,
+          language: detectedLanguage,
+          sessionName: session.name,
+        });
+      } else if (session.role === "STAFF") {
+        fallbackReply = generateStaffFallback(context);
+      } else if (session.role === "ADMIN") {
+        fallbackReply = generateAdminFallback(context);
+      }
 
       return NextResponse.json({
         reply: fallbackReply,
@@ -362,6 +538,7 @@ LANGUAGE & CONVERSATION RULES:
         model: "database-fallback",
         responseTimeMs: responseTimeMs || (Date.now() - startTime),
         language: detectedLanguage,
+        userRole: session.role,
       });
     }
 

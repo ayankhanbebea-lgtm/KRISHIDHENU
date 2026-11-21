@@ -101,10 +101,11 @@ export function isApplicationSpecificQuery(message: string): boolean {
     /\b(my|mera|meri|mere|apna|apni|mujhe)\b/i,
     /\b(token|booking|slot|queue|position|baari|bari)\b/i,
     /\b(payment|paisa|paise|amount|disbursement|bank|rupaye)\b/i,
-    /\b(centre|center|mandi)\b.*\b(time|timing|open|close|kahan|location)\b/i,
-    /\b(status|turn|wait|waiting|ahead|line)\b/i,
+    /\b(centre|center|mandi)\b.*\b(time|timing|open|close|kahan|location|load|status)\b/i,
+    /\b(status|turn|wait|waiting|ahead|line|serving)\b/i,
     /\b(farmer code|profile|account details)\b/i,
-    /\b(टोकन|बुकिंग|स्लॉट|कतार|बारी|भुगतान|पैसे|खाता|मंडी समय)\b/,
+    /\b(overview|statistics|stats|disbursed|total bookings|completed today|active queue)\b/i,
+    /\b(टोकन|बुकिंग|स्लॉट|कतार|बारी|भुगतान|पैसे|खाता|मंडी समय|आंकड़े)\b/,
   ];
 
   return appPatterns.some((pattern) => pattern.test(m));

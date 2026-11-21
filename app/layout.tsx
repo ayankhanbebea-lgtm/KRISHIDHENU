@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { LanguageProvider } from "@/lib/i18n/context";
+import GlobalChatbot from "@/components/GlobalChatbot";
 
 export const metadata: Metadata = {
   title: "KRISHIDHENU — Less waiting. Better planning. Transparent procurement.",
@@ -19,7 +20,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body className="min-h-screen antialiased font-sans">
-        <LanguageProvider>{children}</LanguageProvider>
+        <LanguageProvider>
+          {children}
+          <GlobalChatbot />
+        </LanguageProvider>
       </body>
     </html>
   );
