@@ -11,24 +11,40 @@ const STANDARD_SLOT_WINDOWS = [
 /**
  * Ensures standard slots exist in the database for all active centres on a given date.
  */
+// In-memory cache to prevent redundant DB round-trips checking slots for the same date
+const ensuredDatesCache = new Set<string>();
+
 export async function ensureSlotsForDate(rawDate?: string): Promise<void> {
   const date = normalizeDateToYMD(rawDate);
+  if (ensuredDatesCache.has(date)) return;
+
   const db = getDb();
 
-  const centres = (await db.prepare(`SELECT id FROM procurement_centres`).all()) as { id: string }[];
-  
-  for (const centre of centres) {
-    const existingRow = (await db.prepare(`SELECT COUNT(*) as c FROM slots WHERE centre_id = ? AND date = ?`).get(centre.id, date)) as { c: number } | undefined;
-    const existing = existingRow?.c ?? 0;
-    
-    if (existing === 0) {
-      for (const win of STANDARD_SLOT_WINDOWS) {
-        await db.prepare(
-          `INSERT OR IGNORE INTO slots (id, centre_id, date, start_time, end_time, capacity) VALUES (?, ?, ?, ?, ?, ?)`
-        ).run(newId("slt_"), centre.id, date, win.startTime, win.endTime, win.capacity);
-      }
-    }
+  const [centres, existingSlotsCount] = await Promise.all([
+    db.prepare(`SELECT id FROM procurement_centres`).all() as Promise<{ id: string }[]>,
+    db.prepare(`SELECT COUNT(*) as c FROM slots WHERE date = ?`).get(date) as Promise<{ c: number } | undefined>,
+  ]);
+
+  const expectedSlotCount = centres.length * STANDARD_SLOT_WINDOWS.length;
+  if ((existingSlotsCount?.c ?? 0) >= expectedSlotCount) {
+    ensuredDatesCache.add(date);
+    return;
   }
+
+  await Promise.all(
+    centres.map(async (centre) => {
+      const existingRow = (await db.prepare(`SELECT COUNT(*) as c FROM slots WHERE centre_id = ? AND date = ?`).get(centre.id, date)) as { c: number } | undefined;
+      if ((existingRow?.c ?? 0) === 0) {
+        for (const win of STANDARD_SLOT_WINDOWS) {
+          await db.prepare(
+            `INSERT OR IGNORE INTO slots (id, centre_id, date, start_time, end_time, capacity) VALUES (?, ?, ?, ?, ?, ?)`
+          ).run(newId("slt_"), centre.id, date, win.startTime, win.endTime, win.capacity);
+        }
+      }
+    })
+  );
+
+  ensuredDatesCache.add(date);
 }
 
 // ---------- Token generation (server-side, globally collision-safe per crop) ----------
@@ -120,37 +136,30 @@ export async function centreLoad(centreId: string, rawDate?: string): Promise<Ce
   const db = getDb();
   await ensureSlotsForDate(date);
 
-  const centre = (await db.prepare(`SELECT high_load_threshold, avg_service_time_mins, daily_capacity FROM procurement_centres WHERE id = ?`).get(centreId)) as
-    | { high_load_threshold: number; avg_service_time_mins: number; daily_capacity: number }
-    | undefined;
-  const threshold = centre?.high_load_threshold ?? 50;
-  const avgServiceTime = centre?.avg_service_time_mins ?? 5;
-
-  // Total slot capacity for that centre on that date
-  const capRow = (await db
-    .prepare(`SELECT COALESCE(SUM(capacity), 120) as totalCap FROM slots WHERE centre_id = ? AND date = ?`)
-    .get(centreId, date)) as { totalCap: number } | undefined;
-  const totalCapacity = capRow?.totalCap || (centre?.daily_capacity ?? 120);
-
-  // Confirmed non-cancelled bookings on this date
-  const bookedRow = (await db
-    .prepare(
+  const [centre, capRow, bookedRow, waitingRow] = await Promise.all([
+    db.prepare(`SELECT high_load_threshold, avg_service_time_mins, daily_capacity FROM procurement_centres WHERE id = ?`).get(centreId) as Promise<
+      { high_load_threshold: number; avg_service_time_mins: number; daily_capacity: number } | undefined
+    >,
+    db.prepare(`SELECT COALESCE(SUM(capacity), 120) as totalCap FROM slots WHERE centre_id = ? AND date = ?`).get(centreId, date) as Promise<
+      { totalCap: number } | undefined
+    >,
+    db.prepare(
       `SELECT COUNT(*) as c FROM bookings b
        JOIN slots s ON b.slot_id = s.id
        WHERE b.centre_id = ? AND s.date = ? AND b.status != 'CANCELLED'`
-    )
-    .get(centreId, date)) as { c: number } | undefined;
-  const bookedCount = bookedRow?.c ?? 0;
-  const availableCapacity = Math.max(0, totalCapacity - bookedCount);
-
-  // Currently waiting farmers in active queue on that date
-  const waitingRow = (await db
-    .prepare(
+    ).get(centreId, date) as Promise<{ c: number } | undefined>,
+    db.prepare(
       `SELECT COUNT(*) as c FROM queue_entries q JOIN bookings b ON q.booking_id = b.id
        WHERE q.centre_id = ? AND q.date = ?
        AND b.status NOT IN ('PROCUREMENT_COMPLETED','PAYMENT_PROCESSING','PAYMENT_COMPLETED','CANCELLED','NO_SHOW')`
-    )
-    .get(centreId, date)) as { c: number } | undefined;
+    ).get(centreId, date) as Promise<{ c: number } | undefined>,
+  ]);
+
+  const threshold = centre?.high_load_threshold ?? 50;
+  const avgServiceTime = centre?.avg_service_time_mins ?? 5;
+  const totalCapacity = capRow?.totalCap || (centre?.daily_capacity ?? 120);
+  const bookedCount = bookedRow?.c ?? 0;
+  const availableCapacity = Math.max(0, totalCapacity - bookedCount);
   const waiting = waitingRow?.c ?? 0;
   const estimatedWaitMins = waiting * avgServiceTime;
 
